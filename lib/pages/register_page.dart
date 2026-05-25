@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 
 class RegisterPage extends StatefulWidget {
+  const RegisterPage({super.key});
+
   @override
-  _RegisterPageState createState() => _RegisterPageState();
+  State<RegisterPage> createState() => _RegisterPageState();
 }
 
 class _RegisterPageState extends State<RegisterPage> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
+  bool _isLoading = false;
 
   @override
   void dispose() {
@@ -16,61 +19,125 @@ class _RegisterPageState extends State<RegisterPage> {
     super.dispose();
   }
 
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red.shade400,
+      ),
+    );
+  }
+
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green.shade400,
+      ),
+    );
+  }
+
+  Future<void> _register() async {
+    final email = emailController.text.trim();
+    final password = passwordController.text.trim();
+
+    // 基本验证
+    if (email.isEmpty || password.isEmpty) {
+      _showError('Please fill in all fields.');
+      return;
+    }
+    if (!email.contains('@')) {
+      _showError('Please enter a valid email address.');
+      return;
+    }
+    if (password.length < 6) {
+      _showError('Password must be at least 6 characters.');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      // TODO: 接入 Supabase auth
+      // await Supabase.instance.client.auth.signUp(
+      //   email: email,
+      //   password: password,
+      // );
+
+      // Placeholder: simulate network delay
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      if (mounted) {
+        _showSuccess('Account created! Please log in.');
+        await Future.delayed(const Duration(milliseconds: 800));
+        if (mounted) Navigator.pushReplacementNamed(context, '/login');
+      }
+    } catch (e) {
+      _showError('Registration failed. Please try again.');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
       body: Padding(
-        padding: EdgeInsets.all(24),
+        padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
 
-            Text(
+            const Text(
               'Create Account',
               style: TextStyle(
                 fontSize: 28,
                 fontWeight: FontWeight.bold,
               ),
             ),
-            SizedBox(height: 40),
+            const SizedBox(height: 40),
 
             TextField(
               controller: emailController,
-              decoration: InputDecoration(
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
                 labelText: 'Email',
                 border: OutlineInputBorder(),
               ),
             ),
-            SizedBox(height: 16),
+            const SizedBox(height: 16),
 
             TextField(
               controller: passwordController,
               obscureText: true,
-              decoration: InputDecoration(
-                labelText: 'Password',
+              decoration: const InputDecoration(
+                labelText: 'Password (min. 6 characters)',
                 border: OutlineInputBorder(),
               ),
             ),
-            SizedBox(height: 24),
+            const SizedBox(height: 24),
 
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
-                onPressed: () {
-                  // TODO: connect Supabase auth
-                  Navigator.pushReplacementNamed(context, '/home');
-                },
-                child: Text('Register'),
+                onPressed: _isLoading ? null : _register,
+                child: _isLoading
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Register'),
               ),
             ),
-            SizedBox(height: 12),
+            const SizedBox(height: 12),
 
             TextButton(
               onPressed: () {
-                Navigator.pop(context);
+                Navigator.pushReplacementNamed(context, '/login');
               },
-              child: Text('Already have an account? Login'),
+              child: const Text('Already have an account? Login'),
             ),
 
           ],

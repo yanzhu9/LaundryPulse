@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'pages/login_page.dart';
+import 'pages/register_page.dart';
+import 'pages/welcome_page.dart';
 
 enum MachineStatus {
   available,
@@ -31,7 +34,13 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color.fromARGB(255, 209, 220, 243)),
       ),
-      home: const MyHomePage(),
+      initialRoute: '/login',
+      routes: {
+        '/login':    (context) => const LoginPage(),
+        '/register': (context) => const RegisterPage(),
+        '/welcome':  (context) => const WelcomePage(),
+        '/home':     (context) => const MyHomePage(),
+      },
     );
   }
 }
