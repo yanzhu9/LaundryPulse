@@ -208,6 +208,28 @@ setInterval(async () => {
 
 }, 5000);
 
+// Health check endpoint
+app.get('/', (req, res) => {
+  res.send('Backend deployed successfully! Connected to Supabase database.');
+});
+
+// Database connection test endpoint
+app.get('/test-db', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('users').select().limit(1);
+    if (error) throw error;
+    res.json({
+      message: '✅ Backend and database connection successful',
+      data: data
+    });
+  } catch (e) {
+    res.json({
+      message: '❌ Database connection failed',
+      error: e.message
+    });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
