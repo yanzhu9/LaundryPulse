@@ -216,7 +216,7 @@ app.get('/', (req, res) => {
 // Database connection test endpoint
 app.get('/test-db', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('users').select().limit(1);
+    const { data, error } = await supabase.from('User Table').select().limit(1);
     if (error) throw error;
     res.json({
       message: '✅ Backend and database connection successful',
