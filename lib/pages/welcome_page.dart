@@ -32,13 +32,6 @@ class _WelcomePageState extends State<WelcomePage> {
                 fontWeight: FontWeight.bold,
               ),
             ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pushReplacementNamed(context, '/home');
-              },
-              child: const Text('Get Started'),
-            ),
           ],
         ),
       ),

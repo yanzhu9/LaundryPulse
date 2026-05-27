@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'pages/login_page.dart';
 import 'pages/register_page.dart';
 import 'pages/welcome_page.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'dart:async';
+import 'pages/globals.dart';
 
 enum MachineStatus {
   available,
@@ -178,26 +182,63 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  late List<LaundryMachine> machines;
+  List<LaundryMachine> machines = [];
+  Timer? timer;
 
   @override
   void initState() {
-    super.initState();// keep Flutter's original built-in functions
-    machines = [
-      LaundryMachine(id: 'W-01', status: MachineStatus.overdue),
-      LaundryMachine(id: 'W-02', status: MachineStatus.available),
-      LaundryMachine(id: 'W-03', status: MachineStatus.available),
-      LaundryMachine(id: 'W-04', status: MachineStatus.occupied),
-      LaundryMachine(id: 'W-05', status: MachineStatus.available),
-      LaundryMachine(id: 'W-06', status: MachineStatus.available),
-      LaundryMachine(id: 'D-01', status: MachineStatus.outOfService),
-      LaundryMachine(id: 'D-02', status: MachineStatus.available),
-      LaundryMachine(id: 'D-03', status: MachineStatus.overdue),
-      LaundryMachine(id: 'D-04', status: MachineStatus.available),
-      LaundryMachine(id: 'D-05', status: MachineStatus.occupied),
-      LaundryMachine(id: 'D-06', status: MachineStatus.available),
-    ];
+    super.initState();
+
+    fetchRealMachineData(); // Fetch real machine data from backend
+    
+    timer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      fetchRealMachineData();// Set up periodic timer to fetch real machine data every 5 seconds
+    });
   }
+
+//close the timer if leaving the page
+@override
+void dispose() {
+  timer?.cancel(); 
+  super.dispose();
+}
+
+Future<void> fetchRealMachineData() async {
+  final res = await http.get(Uri.parse("https://laundrypulse.onrender.com/machines"));
+  
+  List<dynamic> rawList = jsonDecode(res.body);
+
+  setState(() {
+    machines = rawList.map((item){
+
+      String statusStr = item["machine_status"];
+
+      MachineStatus st;
+      switch(statusStr){
+        case "available":
+          st = MachineStatus.available;
+          break;
+        case "occupied":
+          st = MachineStatus.occupied;
+          break;
+        case "overdue":
+          st = MachineStatus.overdue;
+          break;
+        case "outOfService":
+          st = MachineStatus.outOfService;
+          break;
+        default:
+          st = MachineStatus.available;
+      }
+
+      return LaundryMachine(
+        id: item["machine_id"],
+        status: st
+      );
+
+    }).toList();
+  });
+}
 
   Color _getStatusColor(MachineStatus status) {
     switch (status) {
@@ -333,6 +374,48 @@ class QueuePage extends StatefulWidget {
 class _QueuePageState extends State<QueuePage> {
   bool autoTransfer = false;
 
+  Future<void> queueWasher() async {
+
+  String url = "https://laundrypulse.onrender.com/api/queue-book";
+
+  final res = await http.post(
+    Uri.parse(url),
+    headers: {"Content-Type":"application/json"},
+    body: jsonEncode({
+      "user_id": current_user_id,
+      "type": "washer"
+    })
+  );
+
+  var result = jsonDecode(res.body);
+
+  if(result["success"] == true){
+    ScaffoldMessenger.of(context).showSnackBar(
+       SnackBar(content: Text(result["message"]))
+    );
+  }
+}
+
+Future<void> queueDryer() async {
+
+  String url = "https://laundrypulse.onrender.com/api/queue-book";
+
+  final res = await http.post(
+    Uri.parse(url),
+    headers: {"Content-Type":"application/json"},
+    body: jsonEncode({
+      "user_id": current_user_id,
+      "type": "dryer"
+    })
+  );
+
+  var result = jsonDecode(res.body);
+
+  ScaffoldMessenger.of(context).showSnackBar(
+     SnackBar(content: Text(result["message"]))
+  );
+}
+
   @override
   Widget build(BuildContext context) {
     return Padding(
@@ -344,7 +427,9 @@ class _QueuePageState extends State<QueuePage> {
       const SizedBox(height: 40),
 
       ElevatedButton(
-        onPressed: () {},
+        onPressed: () {
+          queueWasher();
+        },
         style: ElevatedButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: 22),
         ),
@@ -354,7 +439,9 @@ class _QueuePageState extends State<QueuePage> {
       const SizedBox(height: 25),
 
       ElevatedButton(
-        onPressed: () {},
+        onPressed: () {
+          queueDryer();
+        },
         style: ElevatedButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: 22),
         ),

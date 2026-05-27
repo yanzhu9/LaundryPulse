@@ -1,4 +1,6 @@
+import 'package:dio/dio.dart '; 
 import 'package:flutter/material.dart';
+import 'globals.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -11,6 +13,7 @@ class _LoginPageState extends State<LoginPage> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   bool _isLoading = false;
+  final String backendUrl = "https://laundrypulse.onrender.com";
 
   @override
   void dispose() {
@@ -24,6 +27,15 @@ class _LoginPageState extends State<LoginPage> {
       SnackBar(
         content: Text(message),
         backgroundColor: Colors.red.shade400,
+      ),
+    );
+  }
+
+  void _showSuccess(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green.shade400,
       ),
     );
   }
@@ -45,20 +57,26 @@ class _LoginPageState extends State<LoginPage> {
     setState(() => _isLoading = true);
 
     try {
-      // TODO: 接入 Supabase auth
-      // await Supabase.instance.client.auth.signInWithPassword(
-      //   email: email,
-      //   password: password,
-      // );
-
-      // Placeholder: simulate network delay
-      await Future.delayed(const Duration(milliseconds: 500));
-
-      if (mounted) {
-        Navigator.pushReplacementNamed(context, '/welcome');
+      Response res = await Dio().post(
+        "$backendUrl/login",
+        data:{
+        "email":email,
+        "password":password
       }
+    );
+
+    bool ok = res.data["success"];
+    String msg = res.data["msg"];
+
+    if(ok){
+      current_user_id = res.data["user_id"];
+      _showSuccess(msg);
+      Navigator.pushReplacementNamed(context, '/welcome');
+    }else{
+      _showError(msg);
+    }
     } catch (e) {
-      _showError('Login failed. Please check your credentials.');
+      _showError('Failed to connect to backend.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

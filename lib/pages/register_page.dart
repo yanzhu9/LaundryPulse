@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 
 class RegisterPage extends StatefulWidget {
@@ -11,6 +12,7 @@ class _RegisterPageState extends State<RegisterPage> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   bool _isLoading = false;
+  final String backendUrl = "https://laundrypulse.onrender.com";
 
   @override
   void dispose() {
@@ -58,22 +60,25 @@ class _RegisterPageState extends State<RegisterPage> {
     setState(() => _isLoading = true);
 
     try {
-      // TODO: 接入 Supabase auth
-      // await Supabase.instance.client.auth.signUp(
-      //   email: email,
-      //   password: password,
-      // );
+      var res = await Dio().post(
+        "$backendUrl/api/register",
+        data: {
+        "email": email,
+        "password": password
+        },
+      );
 
-      // Placeholder: simulate network delay
-      await Future.delayed(const Duration(milliseconds: 500));
+     bool isSuccess = res.data["success"];
+     String tipMsg = res.data["msg"];
 
-      if (mounted) {
-        _showSuccess('Account created! Please log in.');
-        await Future.delayed(const Duration(milliseconds: 800));
-        if (mounted) Navigator.pushReplacementNamed(context, '/login');
+     if (isSuccess) {
+       _showSuccess(tipMsg);
+      Navigator.pushReplacementNamed(context, '/login');
+      } else {
+      _showError(tipMsg);
       }
     } catch (e) {
-      _showError('Registration failed. Please try again.');
+      _showError('Failed to connect to backend.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
