@@ -44,7 +44,7 @@ app.post('/register', async (req, res) => {
 
     // check whether email is already registered
     const { data: existingUser } = await supabase
-      .from('User Table')
+      .from('User_Table')
       .select('user_id')
       .eq('email', email)
       .single();
@@ -57,7 +57,7 @@ app.post('/register', async (req, res) => {
     }
 
     await supabase
-      .from('User Table')
+      .from('User_Table')
       .insert([{ email, password }]);
 
     return res.json({
@@ -110,7 +110,7 @@ app.post('/login', async (req, res) => {
     }
 
     const { data: user, error: findError } = await supabase
-      .from('User Table')
+      .from('User_Table')
       .select('email, password')
       .eq('email', email)
       .single();
@@ -145,7 +145,7 @@ app.post('/login', async (req, res) => {
 });
 
 app.get('/machines', async (req, res) => {
-  const { data } = await supabase.from('Machine Table').select();
+  const { data } = await supabase.from('Machine_Table').select();
   res.send(data);
 });
 
@@ -155,7 +155,7 @@ app.post("/api/queue-book", async (req, res) => {
 
     //find whether there is an available machine
     const { data: availableMachines } = await supabase
-      .from("Machine Table")
+      .from("Machine_Table")
       .select("*")
       .eq("machine_type", type)
       .eq("machine_status", "available")
@@ -165,7 +165,7 @@ app.post("/api/queue-book", async (req, res) => {
     if (availableMachines.length > 0) {
       const targetMachine = availableMachines[0];
 
-      await supabase.from("Booking Table").insert([
+      await supabase.from("Booking_Table").insert([
         {
           user_id: user_id,
           machine_id: targetMachine.machine_id,
@@ -176,7 +176,7 @@ app.post("/api/queue-book", async (req, res) => {
       ]);
 
       await supabase
-        .from("Machine Table")
+        .from("Machine_Table")
         .update({ machine_status: "occupied" })
         .eq("machine_id", targetMachine.machine_id);
 
@@ -188,7 +188,7 @@ app.post("/api/queue-book", async (req, res) => {
 
     } else {
       // no available machine, add to queue
-      await supabase.from("Booking Table").insert([
+      await supabase.from("Booking_Table").insert([
         {
           user_id: user_id,
           machine_type: type,
@@ -214,7 +214,7 @@ app.post("/api/finish-wash", async (req, res) => {
     const { machine_id } = req.body;
 
     const { data: machine, error: getError } = await supabase
-      .from("Machine Table")
+      .from("Machine_Table")
       .select("*")
       .eq("machine_id", machine_id)
       .single();
@@ -230,7 +230,7 @@ app.post("/api/finish-wash", async (req, res) => {
 
     //update finished_at and start 15-minute countdown
     await supabase
-      .from("Machine Table")
+      .from("Machine_Table")
       .update({ finished_at: new Date() })
       .eq("machine_id", machine_id);
 
@@ -252,7 +252,7 @@ app.post("/api/release-machine", async (req, res) => {
     const { machine_id } = req.body;
 
     const { data: machine, error: getError } = await supabase
-      .from("Machine Table")
+      .from("Machine_Table")
       .select("*")
       .eq("machine_id", machine_id)
       .single();
@@ -266,7 +266,7 @@ app.post("/api/release-machine", async (req, res) => {
     }
 
     await supabase
-      .from("Machine Table")
+      .from("Machine_Table")
       .update({
         machine_status: "available",
         finished_at: null
@@ -291,7 +291,7 @@ setInterval(async () => {
   const limit = 900000;// 15 minutes in milliseconds
 
   const { data: list } = await supabase
-    .from("Machine Table")
+    .from("Machine_Table")
     .select("*")
     .eq("machine_status", "occupied")
     .not("finished_at", "is", null);
@@ -304,7 +304,7 @@ setInterval(async () => {
 
     if (passMin >= limit) {
       await supabase
-        .from("Machine Table")
+        .from("Machine_Table")
         .update({ machine_status: "overdue" })
         .eq("machine_id", m.machine_id);
     }
@@ -319,7 +319,7 @@ app.get('/', (req, res) => {
 
 app.get('/test-db', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('User Table').select().limit(1);
+    const { data, error } = await supabase.from('User_Table').select().limit(1);
     if (error) throw error;
     res.json({
       message: '✅ Backend and database connection successful',
