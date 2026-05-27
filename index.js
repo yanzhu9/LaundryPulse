@@ -10,29 +10,142 @@ app.use(express.json());
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
-
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 app.post('/register', async (req, res) => {
-  const {email,password} = req.body;
-  const {data} = await supabase
-    .from('users')
-    .insert([{email,password}]);
-  res.send(data);
+  const { email, password } = req.body;
+
+  try {
+    // check whether email is valid
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(email)) {
+      return res.json({
+        success: false,
+        msg: "Invalid email format. Please enter a valid email address."
+      });
+    }
+
+    if (password.length < 6) {
+      return res.json({
+        success: false,
+        msg: "Password must be at least 6 characters long."
+      });
+    }
+
+    // check whether password contains both letters and numbers
+    const hasLetter = /[a-zA-Z]/.test(password);
+    const hasNumber = /\d/.test(password);
+    if (!hasLetter || !hasNumber) {
+      return res.json({
+        success: false,
+        msg: "Password must contain both letters and numbers."
+      });
+    }
+
+    // check whether email is already registered
+    const { data: existingUser } = await supabase
+      .from('User Table')
+      .select('user_id')
+      .eq('email', email)
+      .single();
+
+    if (existingUser) {
+      return res.json({
+        success: false,
+        msg: "This email is already registered. Please use another email."
+      });
+    }
+
+    await supabase
+      .from('User Table')
+      .insert([{ email, password }]);
+
+    return res.json({
+      success: true,
+      msg: "Registration successful! Please log in."
+    });
+
+  } catch (err) {
+    return res.json({
+      success: false,
+      msg: "Registration failed. Please try again later."
+    });
+  }
 });
 
 app.post('/login', async (req, res) => {
-  const {email,password} = req.body;
-  const {data} = await supabase
-    .from('users')
-    .select()
-    .eq('email',email)
-    .eq('password',password);
-  res.send(data);
+  const { email, password } = req.body;
+
+  try {
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailRegex.test(email)) {
+      return res.json({
+        success: false,
+        msg: "Invalid email format. Please enter a valid email address."
+      });
+    }
+
+    // check whether password is empty 
+    if (!password || password.trim() === "") {
+      return res.json({
+        success: false,
+        msg: "Password cannot be empty."
+      });
+    }
+
+    if (password.length < 6) {
+      return res.json({
+        success: false,
+        msg: "Password must be at least 6 characters long."
+      });
+    }
+
+    const hasLetter = /[a-zA-Z]/.test(password);
+    const hasNumber = /\d/.test(password);
+    if (!hasLetter || !hasNumber) {
+      return res.json({
+        success: false,
+        msg: "Password must contain both letters and numbers."
+      });
+    }
+
+    const { data: user, error: findError } = await supabase
+      .from('User Table')
+      .select('email, password')
+      .eq('email', email)
+      .single();
+
+    if (findError || !user) {
+      return res.json({
+        success: false,
+        msg: "Email not found. Please check your email address."
+      });
+    }
+
+    // '!==' is used for strict comparison to avoid type coercion issues
+    if (user.password !== password) {
+      return res.json({
+        success: false,
+        msg: "Incorrect password. Please try again."
+      });
+    }
+
+    return res.json({
+      success: true,
+      msg: "Login successful! Redirecting...",
+      user_id: user.user_id
+    });
+
+  } catch (err) {
+    return res.json({
+      success: false,
+      msg: "Login failed. Please try again later."
+    });
+  }
 });
 
 app.get('/machines', async (req, res) => {
-  const {data} = await supabase.from('machines').select();
+  const { data } = await supabase.from('Machine Table').select();
   res.send(data);
 });
 
@@ -40,47 +153,47 @@ app.post("/api/queue-book", async (req, res) => {
   try {
     const { user_id, type } = req.body;
 
-    // 1.backend find whether there are available machines for the required type
+    //find whether there is an available machine
     const { data: availableMachines } = await supabase
-      .from("machines")
+      .from("Machine Table")
       .select("*")
-      .eq("type", type)
-      .eq("status", "available")
-      .order("id", { ascending: true });
+      .eq("machine_type", type)
+      .eq("machine_status", "available")
+      .order("machine_id", { ascending: true });
 
+    // if there is an available machine
     if (availableMachines.length > 0) {
-      //choose the first available machine
       const targetMachine = availableMachines[0];
 
-      // form the queue info
-      await supabase.from("bookings").insert([
+      await supabase.from("Booking Table").insert([
         {
           user_id: user_id,
-          machine_id: targetMachine.id,
-          book_time: new Date(),
-          status: "occupied"
+          machine_id: targetMachine.machine_id,
+          machine_type: type,
+          created_at: new Date(),
+          booking_status: "using"
         }
       ]);
 
-      // update the machine status
       await supabase
-        .from("machines")
-        .update({ status: "occupied" })
-        .eq("id", targetMachine.id);
+        .from("Machine Table")
+        .update({ machine_status: "occupied" })
+        .eq("machine_id", targetMachine.machine_id);
 
       return res.json({
         success: true,
-        message: "Allocated available machine successfully, your machine ID is ${targetMachine.id}",
+        message: `Allocated available machine successfully, your machine ID is ${targetMachine.machine_id}`,
         machine: targetMachine
       });
 
     } else {
-      // no available machine
-      await supabase.from("queue").insert([
+      // no available machine, add to queue
+      await supabase.from("Booking Table").insert([
         {
           user_id: user_id,
           machine_type: type,
-          queue_time: new Date()
+          created_at: new Date(),
+          booking_status: "waiting"
         }
       ]);
 
@@ -95,12 +208,11 @@ app.post("/api/queue-book", async (req, res) => {
   }
 });
 
-// manually mark the laundry cycle as finished then start the 15 minutes countdown
+//manually trigger when user finishes washing, update finished_at and start 15-minute countdown
 app.post("/api/finish-wash", async (req, res) => {
   try {
     const { machine_id } = req.body;
 
-    // 1.check whether the machine is occupied
     const { data: machine, error: getError } = await supabase
       .from("Machine Table")
       .select("*")
@@ -110,19 +222,17 @@ app.post("/api/finish-wash", async (req, res) => {
     if (getError || !machine) {
       return res.status(404).json({ message: "Machine not found" });
     }
-    if (machine.status !== "occupied") {
+
+    //check whether machine is in occupied state 
+    if (machine.machine_status !== "occupied") {
       return res.status(400).json({ message: "Machine is not in occupied state" });
     }
 
-    // 2. record the finished time
-    const { error: updateError } = await supabase
+    //update finished_at and start 15-minute countdown
+    await supabase
       .from("Machine Table")
       .update({ finished_at: new Date() })
       .eq("machine_id", machine_id);
-
-    if (updateError) {
-      return res.status(500).json({ message: "Failed to mark wash as finished" });
-    }
 
     res.json({
       success: true,
@@ -136,12 +246,11 @@ app.post("/api/finish-wash", async (req, res) => {
   }
 });
 
-// manually mark the machine as the clothes has been collected within 15 minutes 
+//manually trigger when user releases machine, update machine_status to available and reset finished_at
 app.post("/api/release-machine", async (req, res) => {
   try {
     const { machine_id } = req.body;
 
-    // 1. check whether the machine is in occupied state
     const { data: machine, error: getError } = await supabase
       .from("Machine Table")
       .select("*")
@@ -151,22 +260,18 @@ app.post("/api/release-machine", async (req, res) => {
     if (getError || !machine) {
       return res.status(404).json({ message: "Machine not found" });
     }
-    if (machine.status !== "occupied") {
+
+    if (machine.machine_status !== "occupied") {
       return res.status(400).json({ message: "Machine is not in occupied state" });
     }
 
-    // 2. change machine status to available and clear finished_at
-    const { error: updateError } = await supabase
+    await supabase
       .from("Machine Table")
       .update({
-        status: "available",
+        machine_status: "available",
         finished_at: null
       })
       .eq("machine_id", machine_id);
-
-    if (updateError) {
-      return res.status(500).json({ message: "Failed to release machine" });
-    }
 
     res.json({
       success: true,
@@ -180,40 +285,38 @@ app.post("/api/release-machine", async (req, res) => {
   }
 });
 
+// periodically check every 5 seconds, if there is any machine that has been in occupied state for more than 15 minutes, update its status to overdue
 setInterval(async () => {
   const now = new Date();
-  const limit = 900000; //15 minutes
+  const limit = 900000;// 15 minutes in milliseconds
 
-  // monitor the machine that is occupied and has finished_at
   const { data: list } = await supabase
     .from("Machine Table")
     .select("*")
-    .eq("status", "occupied")
+    .eq("machine_status", "occupied")
     .not("finished_at", "is", null);
 
   if (!list) return;
 
   for (let m of list) {
     const start = new Date(m.finished_at);
-       const passMin = now - start;
+    const passMin = now - start;
 
-    //if over 15 minutes change the machine status to occupied
     if (passMin >= limit) {
       await supabase
         .from("Machine Table")
-        .update({ status: "overdue" })
+        .update({ machine_status: "overdue" })
         .eq("machine_id", m.machine_id);
     }
   }
 
 }, 5000);
 
-// Health check endpoint
+// test endpoint to verify backend and database connection
 app.get('/', (req, res) => {
   res.send('Backend deployed successfully! Connected to Supabase database.');
 });
 
-// Database connection test endpoint
 app.get('/test-db', async (req, res) => {
   try {
     const { data, error } = await supabase.from('User Table').select().limit(1);
