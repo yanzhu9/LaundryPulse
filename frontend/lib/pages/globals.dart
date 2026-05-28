@@ -1,0 +1,1 @@
+String? current_user_id;//can be null if not logged in
