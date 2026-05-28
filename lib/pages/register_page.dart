@@ -61,7 +61,7 @@ class _RegisterPageState extends State<RegisterPage> {
 
     try {
       var res = await Dio().post(
-        "$backendUrl/api/register",
+        "$backendUrl/register",
         data: {
         "email": email,
         "password": password
