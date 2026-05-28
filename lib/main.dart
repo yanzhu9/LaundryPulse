@@ -208,6 +208,8 @@ Future<void> fetchRealMachineData() async {
   
   List<dynamic> rawList = jsonDecode(res.body);
 
+  rawList.sort((a, b) => a["machine_id"].compareTo(b["machine_id"]));
+  
   setState(() {
     machines = rawList.map((item){
 
