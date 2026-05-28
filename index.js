@@ -145,7 +145,16 @@ app.post('/login', async (req, res) => {
 });
 
 app.get('/machines', async (req, res) => {
-  const { data } = await supabase.from('Machine_Table').select();
+  const { data, error } = await supabase
+    .from('Machine_Table')
+    .select('*')
+    .order('machine_id', { ascending: true }); // order by machine_id in ascending order
+
+  if (error) {
+    console.error('Failed to fetch machine data:', error);
+    return res.status(500).json({ success: false, msg: 'Failed to fetch machine data' });
+  }
+
   res.send(data);
 });
 
