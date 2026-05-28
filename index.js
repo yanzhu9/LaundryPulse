@@ -179,7 +179,6 @@ app.post("/api/queue-book", async (req, res) => {
           user_id: user_id,
           machine_id: targetMachine.machine_id,
           machine_type: type,
-          created_at: new Date(),
           booking_status: "using"
         }
       ]);
@@ -201,7 +200,6 @@ app.post("/api/queue-book", async (req, res) => {
         {
           user_id: user_id,
           machine_type: type,
-          created_at: new Date(),
           booking_status: "waiting"
         }
       ]);
