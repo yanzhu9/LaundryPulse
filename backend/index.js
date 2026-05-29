@@ -178,6 +178,7 @@ app.post("/api/queue-book", async (req, res) => {
         {
           user_id: user_id,
           machine_id: targetMachine.machine_id,
+          machine_type: type,
           booking_status: "using"
         }
       ]);
@@ -198,6 +199,7 @@ app.post("/api/queue-book", async (req, res) => {
       await supabase.from("Booking_Table").insert([
         {
           user_id: user_id,
+          machine_type: type,
           booking_status: "waiting"
         }
       ]);
