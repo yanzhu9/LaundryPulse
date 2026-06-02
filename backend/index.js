@@ -340,6 +340,51 @@ app.get('/test-db', async (req, res) => {
   }
 });
 
+const fetch = require('node-fetch');
+
+app.get('/getMachineInfo', async (req, res) => {
+  try {
+    const mid = req.query.mid;
+    const { data: machData } = await supabase
+      .from('Machine_Table')
+      .select('remaining_time')
+      .eq('machine_id', mid)
+      .single();
+
+    const { count: waitCnt } = await supabase
+      .from('Booking_Table')
+      .select('id', { count: 'exact', head: true })
+      .eq('machine_id', mid)
+      .eq('booking_status', 'waiting');
+
+    res.json({
+      remain_seconds: machData?.remaining_time ?? 0,
+      ahead_count: waitCnt ?? 0
+    })
+  } catch (err) {
+    res.json({ remain_seconds: 0, ahead_count: 0 })
+  }
+})
+
+app.post('/updateRemainSec', async (req, res) => {
+  const { mid, sec } = req.body;
+  await supabase
+    .from('Machine_Table')
+    .update({ remaining_time: Number(sec) })
+    .eq('machine_id', mid);
+  res.send('ok');
+})
+
+app.post('/finishCycle', async (req, res) => {
+  const { mid } = req.body;
+  await fetch(`http://localhost:${PORT}/api/finish-wash`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ machine_id: mid })
+  })
+  res.end();
+})
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
