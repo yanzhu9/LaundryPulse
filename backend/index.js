@@ -290,28 +290,232 @@ app.post("/api/release-machine", async (req, res) => {
   }
 });
 
-// periodically check every 5 seconds, if there is any machine that has been in occupied state for more than 15 minutes, update its status to overdue
+// GET /getMachineInfo?mid=:id
+// Returns remaining wash seconds and number of people waiting ahead
+app.get('/getMachineInfo', async (req, res) => {
+  try {
+    const mid = req.query.mid;
+
+    const { data: machData } = await supabase
+      .from('Machine_Table')
+      .select('finished_at')
+      .eq('machine_id', mid)
+      .single();
+
+    const { count: waitCnt } = await supabase
+      .from('Booking_Table')
+      .select('booking_id', { count: 'exact', head: true })
+      .eq('machine_id', mid)
+      .eq('booking_status', 'waiting');
+
+    let remainSec = 0;
+    if (machData?.finished_at) {
+      const nowMs = Date.now();
+      const endMs = new Date(machData.finished_at).getTime();
+      remainSec = Math.round((endMs - nowMs) / 1000);
+      if (remainSec < 0) remainSec = 0;
+    }
+
+    res.json({
+      remain_seconds: remainSec,
+      ahead_count: waitCnt ?? 0
+    });
+  } catch (err) {
+    res.json({ remain_seconds: 0, ahead_count: 0 });
+  }
+});
+
+// POST /api/machines/:id/start
+// User presses "Start Washing" → set finished_at = now + wash duration
+app.post('/api/machines/:id/start', async (req, res) => {
+  try {
+    const machine_id = req.params.id;
+
+    const { data: machine, error: getError } = await supabase
+      .from('Machine_Table')
+      .select('*')
+      .eq('machine_id', machine_id)
+      .single();
+
+    if (getError || !machine) {
+      return res.status(404).json({ success: false, message: 'Machine not found' });
+    }
+
+    if (machine.machine_status !== 'occupied') {
+      return res.status(400).json({ success: false, message: 'Machine is not in occupied state' });
+    }
+
+    // Washer (W-xx): 34 minutes, Dryer (D-xx): 30 minutes
+    const addMin = machine_id.startsWith('W') ? 34 : 30;
+    const finishedAt = new Date(Date.now() + addMin * 60 * 1000).toISOString();
+
+    await supabase
+      .from('Machine_Table')
+      .update({ finished_at: finishedAt })
+      .eq('machine_id', machine_id);
+
+    return res.json({
+      success: true,
+      message: `Washing started for machine ${machine_id}. Estimated finish in ${addMin} minutes.`,
+      machine_id: machine_id,
+      finished_at: finishedAt
+    });
+
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /finishCycle
+// Called by frontend when countdown reaches 0 → trigger finish-wash
+app.post('/finishCycle', async (req, res) => {
+  try {
+    const { mid } = req.body;
+    const machine_id = mid;
+
+    const { data: machine } = await supabase
+      .from('Machine_Table')
+      .select('*')
+      .eq('machine_id', machine_id)
+      .single();
+
+    if (!machine) {
+      return res.status(404).json({ success: false, message: 'Machine not found' });
+    }
+
+    // Set grace_end_time = now + 15 minutes
+    const graceEndTime = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+    await supabase
+      .from('Machine_Table')
+      .update({
+        machine_status: 'grace-period',
+        finished_at: graceEndTime
+      })
+      .eq('machine_id', machine_id);
+
+    // TODO: Send FCM push notification "Your laundry is done, please collect within 15 minutes"
+
+    return res.json({
+      success: true,
+      message: `Machine ${machine_id} cycle finished. 15-minute grace period started.`
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/machines/:id/finish
+// Mark wash cycle as finished → set status to grace-period, start 15-minute countdown
+app.post("/api/machines/:id/finish", async (req, res) => {
+  try {
+    const machine_id = req.params.id;
+
+    const { data: machine, error: getError } = await supabase
+      .from("Machine_Table")
+      .select("*")
+      .eq("machine_id", machine_id)
+      .single();
+
+    if (getError || !machine) {
+      return res.status(404).json({ success: false, message: "Machine not found" });
+    }
+
+    if (machine.machine_status !== "occupied") {
+      return res.status(400).json({ success: false, message: "Machine is not in occupied state" });
+    }
+
+    // Set grace_end_time = now + 15 minutes, stored in finished_at
+    const graceEndTime = new Date(Date.now() + 15 * 60 * 1000);
+
+    await supabase
+      .from("Machine_Table")
+      .update({
+        machine_status: "grace-period",
+        finished_at: graceEndTime.toISOString()
+      })
+      .eq("machine_id", machine_id);
+
+    // TODO: Send FCM push notification to user
+    // "Your laundry is done, please collect within 15 minutes"
+
+    return res.json({
+      success: true,
+      message: `Machine ${machine_id} wash cycle finished. 15-minute grace period started.`,
+      machine_id: machine_id,
+      grace_end_time: graceEndTime
+    });
+
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/machines/:id/collect
+// User confirms clothes collected → set status back to available
+app.post("/api/machines/:id/collect", async (req, res) => {
+  try {
+    const machine_id = req.params.id;
+
+    const { data: machine, error: getError } = await supabase
+      .from("Machine_Table")
+      .select("*")
+      .eq("machine_id", machine_id)
+      .single();
+
+    if (getError || !machine) {
+      return res.status(404).json({ success: false, message: "Machine not found" });
+    }
+
+    if (machine.machine_status !== "grace-period" && machine.machine_status !== "overdue") {
+      return res.status(400).json({ success: false, message: "Machine is not in grace-period or overdue state" });
+    }
+
+    await supabase
+      .from("Machine_Table")
+      .update({
+        machine_status: "available",
+        finished_at: null
+      })
+      .eq("machine_id", machine_id);
+
+    // TODO: Send FCM push notification "Clothes collected successfully"
+
+    return res.json({
+      success: true,
+      message: `Machine ${machine_id} is now available.`,
+      machine_id: machine_id
+    });
+
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Periodically check every 5 seconds:
+// If a machine is in grace-period and finished_at has passed → mark as overdue
 setInterval(async () => {
   const now = new Date();
-  const limit = 900000;// 15 minutes in milliseconds
 
   const { data: list } = await supabase
     .from("Machine_Table")
     .select("*")
-    .eq("machine_status", "occupied")
+    .eq("machine_status", "grace-period")
     .not("finished_at", "is", null);
 
   if (!list) return;
 
   for (let m of list) {
-    const start = new Date(m.finished_at);
-    const passMin = now - start;
+    const graceEnd = new Date(m.finished_at);
 
-    if (passMin >= limit) {
+    if (now >= graceEnd) {
       await supabase
         .from("Machine_Table")
         .update({ machine_status: "overdue" })
         .eq("machine_id", m.machine_id);
+
+      // TODO: Send FCM push notification "Please collect your laundry immediately"
+      console.log(`Machine ${m.machine_id} grace period expired → overdue`);
     }
   }
 
