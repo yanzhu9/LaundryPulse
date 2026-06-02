@@ -209,7 +209,7 @@ Future<void> fetchRealMachineData() async {
   List<dynamic> rawList = jsonDecode(res.body);
 
   rawList.sort((a, b) => a["machine_id"].compareTo(b["machine_id"]));
-
+  
   setState(() {
     machines = rawList.map((item){
 
@@ -520,67 +520,10 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 }
 
-
-// Real-time Wait Time Page for Occupied Machines (Stateful Widget)
-class RealTimeWaitTimePage extends StatefulWidget {
+class RealTimeWaitTimePage extends StatelessWidget {
   final String machineId;
+
   const RealTimeWaitTimePage({super.key, required this.machineId});
-
-  @override
-  State<RealTimeWaitTimePage> createState() => _RealTimeWaitTimePageState();
-}
-
-class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
-  int remainTotalSec = 0;
-  int aheadPeople = 0;
-  Timer? countTimer;
-  final String baseUrl = "https://laundrypulse.onrender.com";
-
-  @override
-  void initState() {
-    super.initState();
-    fetchInitData();
-  }
-
-  @override
-  void dispose() {
-    countTimer?.cancel();
-    super.dispose();
-  }
-
-  Future<void> fetchInitData() async {
-    final res = await http.get(Uri.parse("$baseUrl/getMachineInfo?mid=${widget.machineId}"));
-    final map = jsonDecode(res.body);
-    setState(() {
-      remainTotalSec = map["remain_seconds"];
-      aheadPeople = map["ahead_count"];
-    });
-    startCountDown();
-  }
-
-  void startCountDown() {
-    countTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
-      if (remainTotalSec <= 0) {
-        timer.cancel();
-        await http.post(
-          Uri.parse("$baseUrl/finishCycle"),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({"mid": widget.machineId})
-      );
-        return;
-      }
-      setState(() => remainTotalSec -= 1);
-      if(timer.tick % 5 == 0){
-        fetchInitData(); // Every 5 seconds, sync with backend to get the most accurate remaining time and ahead count (in case of any changes like machine cycle finishing or new bookings)
-      }
-    });
-  }
-
-  String formatMMSS(int totalSec) {
-    int min = totalSec ~/ 60;
-    int sec = totalSec % 60;
-    return "${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}";
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -588,65 +531,11 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
       appBar: AppBar(
         backgroundColor: const Color.fromARGB(255, 147, 187, 243),
         centerTitle: true,
-        title: Text('Wait Time for ${widget.machineId}'),
-        leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 32),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const SizedBox(height: 100),
-            Center(
-              child: Column(
-                children: [
-            Container(
-              width: 270,
-              height: 270,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.blue, width: 7),
-              ),
-              child: Center(
-                child: Text(
-                  formatMMSS(remainTotalSec),
-                  style: const TextStyle(fontSize: 52, fontWeight: FontWeight.bold, color: Colors.black),
-                ),
-              ),
-            ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 12),
-            Text(
-              "Waiting Ahead:$aheadPeople",
-              style: const TextStyle(fontSize: 19),
-            ),
-
-            const SizedBox(height: 240),
-
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
-                  Text("Note: A 15-min pick-up window opens after each cycle ends. Please arrange your time properly.")
-                ],
-              ),
-            )
-          ],
-        ),
+        title: Text('Wait Time for $machineId'),
       ),
     );
   }
-}
+} 
 
 class OverdueHandlingPage extends StatelessWidget {
   final String machineId;
