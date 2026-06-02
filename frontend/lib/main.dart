@@ -533,6 +533,7 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
   int remainTotalSec = 0;
   int aheadPeople = 0;
   bool washingStarted = false;
+  bool isGracePeriod = false;
   bool isLoading = false;
   Timer? countTimer;
   final String baseUrl = "https://laundrypulse.onrender.com";
@@ -553,10 +554,12 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
     final res = await http.get(Uri.parse("$baseUrl/getMachineInfo?mid=${widget.machineId}"));
     final map = jsonDecode(res.body);
     final secs = map["remain_seconds"] as int;
+    final status = map["machine_status"] as String;
     setState(() {
       remainTotalSec = secs;
       aheadPeople = map["ahead_count"];
-      washingStarted = secs > 0; // if remain > 0, washing already started
+      isGracePeriod = (status == 'grace-period');
+      washingStarted = secs > 0;
     });
     if (secs > 0 && countTimer == null) {
       startCountDown();
@@ -598,11 +601,18 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
       if (remainTotalSec <= 0) {
         timer.cancel();
         countTimer = null;
+        // Trigger grace-period: machine_status → grace-period, finished_at = now + 15 min
         await http.post(
-          Uri.parse("$baseUrl/finishCycle"),
+          Uri.parse("$baseUrl/api/machines/${widget.machineId}/finish"),
           headers: {"Content-Type": "application/json"},
-          body: jsonEncode({"mid": widget.machineId})
         );
+        if (mounted) {
+          setState(() {
+            isGracePeriod = true;
+            remainTotalSec = 15 * 60; // 15-minute grace period countdown
+          });
+          startCountDown(); // restart for grace period
+        }
         return;
       }
 
@@ -612,6 +622,31 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
         fetchInitData();
       }
     });
+  }
+
+  Future<void> collectClothes() async {
+    setState(() => isLoading = true);
+    try {
+      final res = await http.post(
+        Uri.parse("$baseUrl/api/machines/${widget.machineId}/collect"),
+        headers: {"Content-Type": "application/json"},
+      );
+      final map = jsonDecode(res.body);
+      if (map["success"] == true && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Clothes collected! Machine is now available."), backgroundColor: Colors.green),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed. Please try again."), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
   }
 
   String formatMMSS(int totalSec) {
@@ -636,8 +671,56 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
           children: [
             const SizedBox(height: 60),
 
-            // Countdown circle or Start button
-            washingStarted
+            // Grace period view
+            isGracePeriod
+                ? Column(
+                    children: [
+                      const Icon(Icons.check_circle_outline, size: 80, color: Colors.orange),
+                      const SizedBox(height: 16),
+                      const Text(
+                        "Washing Done!",
+                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        "Please collect your clothes within 15 minutes.",
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 15, color: Colors.grey),
+                      ),
+                      const SizedBox(height: 24),
+                      Container(
+                        width: 270,
+                        height: 270,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.orange, width: 7),
+                        ),
+                        child: Center(
+                          child: Text(
+                            formatMMSS(remainTotalSec),
+                            style: const TextStyle(fontSize: 52, fontWeight: FontWeight.bold, color: Colors.orange),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: isLoading ? null : collectClothes,
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 18),
+                            backgroundColor: Colors.green,
+                          ),
+                          child: isLoading
+                              ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                              : const Text("Collected ✓", style: TextStyle(fontSize: 18, color: Colors.white)),
+                        ),
+                      ),
+                    ],
+                  )
+            // Wash countdown or Start button
+                : washingStarted
                 ? Column(
                     children: [
                       Container(

@@ -298,7 +298,7 @@ app.get('/getMachineInfo', async (req, res) => {
 
     const { data: machData } = await supabase
       .from('Machine_Table')
-      .select('finished_at')
+      .select('finished_at, machine_status')
       .eq('machine_id', mid)
       .single();
 
@@ -318,10 +318,11 @@ app.get('/getMachineInfo', async (req, res) => {
 
     res.json({
       remain_seconds: remainSec,
-      ahead_count: waitCnt ?? 0
+      ahead_count: waitCnt ?? 0,
+      machine_status: machData?.machine_status ?? 'occupied'
     });
   } catch (err) {
-    res.json({ remain_seconds: 0, ahead_count: 0 });
+    res.json({ remain_seconds: 0, ahead_count: 0, machine_status: 'occupied' });
   }
 });
 
