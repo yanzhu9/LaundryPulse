@@ -536,45 +536,55 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
   Timer? countTimer;
   final String baseUrl = "https://laundrypulse.onrender.com";
 
-  @override
-  void initState() {
-    super.initState();
-    fetchInitData();
-  }
+@override
+void initState() {
+  super.initState();
+  fetchInitData(); // Fetch initial remaining time and ahead count when page loads
+}
 
-  @override
-  void dispose() {
-    countTimer?.cancel();
-    super.dispose();
-  }
+@override
+void dispose() {
+  countTimer?.cancel();
+  super.dispose();
+}
 
-  Future<void> fetchInitData() async {
-    final res = await http.get(Uri.parse("$baseUrl/getMachineInfo?mid=${widget.machineId}"));
-    final map = jsonDecode(res.body);
-    setState(() {
-      remainTotalSec = map["remain_seconds"];
-      aheadPeople = map["ahead_count"];
-    });
+Future<void> fetchInitData() async {
+  final res = await http.get(Uri.parse("$baseUrl/getMachineInfo?mid=${widget.machineId}"));
+  final map = jsonDecode(res.body);
+  setState(() {
+    remainTotalSec = map["remain_seconds"];
+    aheadPeople = map["ahead_count"];
+  });
+  if(countTimer == null){
     startCountDown();
   }
+}
 
-  void startCountDown() {
-    countTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
-      if (remainTotalSec <= 0) {
-        timer.cancel();
-        await http.post(
-          Uri.parse("$baseUrl/finishCycle"),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({"mid": widget.machineId})
+void startCountDown() {
+  //Before starting a new timer, make sure to cancel any existing timer to avoid multiple timers running simultaneously
+  countTimer?.cancel();
+  countTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+    if (!mounted) return;
+
+    if (remainTotalSec <= 0) {
+      timer.cancel();
+      countTimer = null;
+      await http.post(
+        Uri.parse("$baseUrl/finishCycle"),
+        headers: {"Content-Type":"application/json"},
+        body: jsonEncode({"mid": widget.machineId})
       );
-        return;
-      }
-      setState(() => remainTotalSec -= 1);
-      if(timer.tick % 5 == 0){
-        fetchInitData(); // Every 5 seconds, sync with backend to get the most accurate remaining time and ahead count (in case of any changes like machine cycle finishing or new bookings)
-      }
-    });
-  }
+      return;
+    }
+
+    setState(() => remainTotalSec -= 1);
+
+    // Every 10 seconds, fetch the latest remaining time and ahead count from the backend to ensure accuracy, in case there are any changes (like someone ahead finishing early or new people joining the queue)
+    if(timer.tick % 10 == 0){
+      fetchInitData();
+    }
+  });
+}
 
   String formatMMSS(int totalSec) {
     int min = totalSec ~/ 60;
