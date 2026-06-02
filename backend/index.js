@@ -340,14 +340,12 @@ app.get('/test-db', async (req, res) => {
   }
 });
 
-const fetch = require('node-fetch');
-
 app.get('/getMachineInfo', async (req, res) => {
   try {
     const mid = req.query.mid;
     const { data: machData } = await supabase
       .from('Machine_Table')
-      .select('remaining_time')
+      .select('finished_at') 
       .eq('machine_id', mid)
       .single();
 
@@ -357,8 +355,16 @@ app.get('/getMachineInfo', async (req, res) => {
       .eq('machine_id', mid)
       .eq('booking_status', 'waiting');
 
+    let remainSec = 0;
+    if(machData?.finished_at){
+      const nowMs = Date.now();
+      const endMs = new Date(machData.finished_at).getTime();
+      remainSec = Math.round((endMs - nowMs)/1000);
+      if(remainSec < 0) remainSec = 0; // if the countdown has already ended, return 0 instead of negative value
+    }
+
     res.json({
-      remain_seconds: machData?.remaining_time ?? 0,
+      remain_seconds: remainSec, 
       ahead_count: waitCnt ?? 0
     })
   } catch (err) {
@@ -366,23 +372,28 @@ app.get('/getMachineInfo', async (req, res) => {
   }
 })
 
-app.post('/updateRemainSec', async (req, res) => {
-  const { mid, sec } = req.body;
-  await supabase
-    .from('Machine_Table')
-    .update({ remaining_time: Number(sec) })
-    .eq('machine_id', mid);
-  res.send('ok');
-})
-
 app.post('/finishCycle', async (req, res) => {
   const { mid } = req.body;
-  await fetch(`http://localhost:${PORT}/api/finish-wash`, {
+  const baseUrl = process.env.RENDER_URL ?? "https://laundrypulse.onrender.com";
+  const resp = await fetch(`${baseUrl}/api/finish-wash`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ machine_id: mid })
   })
-  res.end();
+  const result = await resp.json()
+  res.json(result)
+})
+
+app.post('/setMachineEndTime',async(req,res)=>{
+  const {mid}=req.body;
+  let addMin;
+//if machine is washer, add 34 minutes; if dryer, add 30 minutes. Machine ID starts with 'W' for washer and 'D' for dryer.
+  if(mid.startsWith('W')) addMin=34;
+  else if(mid.startsWith('D')) addMin=30;
+
+  const endTime = new Date(Date.now()+addMin*60*1000).toISOString();
+  await supabase.from('Machine_Table').update({finished_at:endTime}).eq('machine_id',mid);
+  res.send('ok');
 })
 
 const PORT = process.env.PORT || 3000;
