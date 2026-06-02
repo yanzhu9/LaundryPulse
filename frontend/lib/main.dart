@@ -520,10 +520,105 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 }
 
-class RealTimeWaitTimePage extends StatelessWidget {
+// Real-time Wait Time Page for Occupied Machines (Stateful Widget)
+class RealTimeWaitTimePage extends StatefulWidget {
   final String machineId;
-
   const RealTimeWaitTimePage({super.key, required this.machineId});
+
+  @override
+  State<RealTimeWaitTimePage> createState() => _RealTimeWaitTimePageState();
+}
+
+class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
+  int remainTotalSec = 0;
+  int aheadPeople = 0;
+  bool washingStarted = false;
+  bool isLoading = false;
+  Timer? countTimer;
+  final String baseUrl = "https://laundrypulse.onrender.com";
+
+  @override
+  void initState() {
+    super.initState();
+    fetchInitData();
+  }
+
+  @override
+  void dispose() {
+    countTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> fetchInitData() async {
+    final res = await http.get(Uri.parse("$baseUrl/getMachineInfo?mid=${widget.machineId}"));
+    final map = jsonDecode(res.body);
+    final secs = map["remain_seconds"] as int;
+    setState(() {
+      remainTotalSec = secs;
+      aheadPeople = map["ahead_count"];
+      washingStarted = secs > 0; // if remain > 0, washing already started
+    });
+    if (secs > 0 && countTimer == null) {
+      startCountDown();
+    }
+  }
+
+  Future<void> startWashing() async {
+    setState(() => isLoading = true);
+    try {
+      final res = await http.post(
+        Uri.parse("$baseUrl/api/machines/${widget.machineId}/start"),
+        headers: {"Content-Type": "application/json"},
+      );
+      final map = jsonDecode(res.body);
+      if (map["success"] == true) {
+        await fetchInitData();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Washing started! Timer is running."), backgroundColor: Colors.green),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to start. Please try again."), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  void startCountDown() {
+    countTimer?.cancel();
+    countTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      if (!mounted) return;
+
+      if (remainTotalSec <= 0) {
+        timer.cancel();
+        countTimer = null;
+        await http.post(
+          Uri.parse("$baseUrl/finishCycle"),
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({"mid": widget.machineId})
+        );
+        return;
+      }
+
+      setState(() => remainTotalSec -= 1);
+
+      if (timer.tick % 10 == 0) {
+        fetchInitData();
+      }
+    });
+  }
+
+  String formatMMSS(int totalSec) {
+    int min = totalSec ~/ 60;
+    int sec = totalSec % 60;
+    return "${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}";
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -531,11 +626,91 @@ class RealTimeWaitTimePage extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: const Color.fromARGB(255, 147, 187, 243),
         centerTitle: true,
-        title: Text('Wait Time for $machineId'),
+        title: Text('Machine ${widget.machineId}'),
+        leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const SizedBox(height: 60),
+
+            // Countdown circle or Start button
+            washingStarted
+                ? Column(
+                    children: [
+                      Container(
+                        width: 270,
+                        height: 270,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Colors.blue, width: 7),
+                        ),
+                        child: Center(
+                          child: Text(
+                            formatMMSS(remainTotalSec),
+                            style: const TextStyle(fontSize: 52, fontWeight: FontWeight.bold, color: Colors.black),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        "Waiting Ahead: $aheadPeople",
+                        style: const TextStyle(fontSize: 19),
+                      ),
+                    ],
+                  )
+                : Column(
+                    children: [
+                      const Icon(Icons.local_laundry_service, size: 100, color: Colors.blue),
+                      const SizedBox(height: 24),
+                      const Text(
+                        "Ready to wash?",
+                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text(
+                        "Press Start Washing when you load your clothes.",
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 15, color: Colors.grey),
+                      ),
+                      const SizedBox(height: 32),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: isLoading ? null : startWashing,
+                          style: ElevatedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 18),
+                            backgroundColor: Colors.blue,
+                          ),
+                          child: isLoading
+                              ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                              : const Text("Start Washing", style: TextStyle(fontSize: 18, color: Colors.white)),
+                        ),
+                      ),
+                    ],
+                  ),
+
+            const SizedBox(height: 40),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                "Note: A 15-min pick-up window opens after each cycle ends. Please arrange your time properly.",
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
-} 
+}
 
 class OverdueHandlingPage extends StatelessWidget {
   final String machineId;
