@@ -353,7 +353,7 @@ app.get('/getMachineInfo', async (req, res) => {
 
     const { count: waitCnt } = await supabase
       .from('Booking_Table')
-      .select('id', { count: 'exact', head: true })
+      .select('booking_id', { count: 'exact', head: true })
       .eq('machine_id', mid)
       .eq('booking_status', 'waiting');
 
