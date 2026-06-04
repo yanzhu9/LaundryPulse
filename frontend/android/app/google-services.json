@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "155150232700",
+    "project_id": "laundrypulse-94c35",
+    "storage_bucket": "laundrypulse-94c35.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:155150232700:android:65986c74161517626e6df9",
+        "android_client_info": {
+          "package_name": "com.example.laundrypulse_application"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDZz_wX5AcCalWXyltg-j088NXbKJHL42o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
