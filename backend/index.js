@@ -3,6 +3,8 @@ require('dotenv').config();
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const cors = require('cors');
+const admin = require('firebase-admin');
+const serviceAccount = require('./serviceAccountKey.json');
 
 const app = express();
 app.use(cors());
@@ -11,6 +13,44 @@ app.use(express.json());
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
+
+// Initialize Firebase Admin SDK
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+
+// FCM helper: send notification to a user by user_id
+async function sendNotification(userId, title, body) {
+  try {
+    const { data: user } = await supabase
+      .from('User_Table')
+      .select('fcm_token')
+      .eq('user_id', userId)
+      .single();
+
+    if (!user?.fcm_token) return;
+
+    await admin.messaging().send({
+      token: user.fcm_token,
+      notification: { title, body },
+    });
+
+    console.log(`📲 Notification sent to user ${userId}: ${title}`);
+  } catch (err) {
+    console.error(`FCM error for user ${userId}:`, err.message);
+  }
+}
+
+// POST /update-fcm-token — save user's FCM device token
+app.post('/update-fcm-token', async (req, res) => {
+  const { user_id, fcm_token } = req.body;
+  if (!user_id || !fcm_token) return res.json({ success: false });
+  await supabase
+    .from('User_Table')
+    .update({ fcm_token })
+    .eq('user_id', user_id);
+  res.json({ success: true });
+});
 
 app.post('/register', async (req, res) => {
   const { email: rawEmail, password } = req.body;
@@ -189,6 +229,10 @@ app.post("/api/queue-book", async (req, res) => {
         .update({ machine_status: "occupied" })
         .eq("machine_id", targetMachine.machine_id);
 
+      // FCM: notify user of successful booking
+      await sendNotification(user_id, "Booking Confirmed",
+        `You have been allocated Machine ${targetMachine.machine_id}. Please start your laundry soon.`);
+
       return res.json({
         success: true,
         message: `Allocated available machine successfully, your machine ID is ${targetMachine.machine_id}`,
@@ -203,6 +247,10 @@ app.post("/api/queue-book", async (req, res) => {
           booking_status: "waiting"
         }
       ]);
+
+      // FCM: notify user they joined the queue
+      await sendNotification(user_id, "Added to Queue",
+        `No available machine right now. You have been added to the waiting queue.`);
 
       return res.json({
         success: true,
@@ -439,8 +487,17 @@ app.post("/api/machines/:id/finish", async (req, res) => {
       })
       .eq("machine_id", machine_id);
 
-    // TODO: Send FCM push notification to user
-    // "Your laundry is done, please collect within 15 minutes"
+    // FCM: notify user laundry is done
+    const { data: booking } = await supabase
+      .from('Booking_Table')
+      .select('user_id')
+      .eq('machine_id', machine_id)
+      .eq('booking_status', 'using')
+      .single();
+    if (booking?.user_id) {
+      await sendNotification(booking.user_id, "Laundry Done",
+        `Your laundry in Machine ${machine_id} is done. Please collect within 15 minutes.`);
+    }
 
     return res.json({
       success: true,
@@ -517,7 +574,17 @@ setInterval(async () => {
         .update({ machine_status: "overdue" })
         .eq("machine_id", m.machine_id);
 
-      // TODO: Send FCM push notification "Please collect your laundry immediately"
+      // FCM: notify user laundry is overdue
+      const { data: booking } = await supabase
+        .from('Booking_Table')
+        .select('user_id')
+        .eq('machine_id', m.machine_id)
+        .eq('booking_status', 'using')
+        .single();
+      if (booking?.user_id) {
+        await sendNotification(booking.user_id, "Please Collect Now",
+          `Your laundry in Machine ${m.machine_id} has been waiting too long. Please collect immediately.`);
+      }
       console.log(`Machine ${m.machine_id} grace period expired → overdue`);
     }
   }
