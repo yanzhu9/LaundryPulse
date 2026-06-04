@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'globals.dart';
 
 class LoginPage extends StatefulWidget {
@@ -70,8 +71,19 @@ class _LoginPageState extends State<LoginPage> {
 
     if(ok){
       current_user_id = res.data["user_id"];
+
+      // Request notification permission and save FCM token
+      await FirebaseMessaging.instance.requestPermission();
+      final fcmToken = await FirebaseMessaging.instance.getToken();
+      if (fcmToken != null) {
+        await Dio().post("$backendUrl/update-fcm-token", data: {
+          "user_id": current_user_id,
+          "fcm_token": fcmToken,
+        });
+      }
+
       _showSuccess(msg);
-      Navigator.pushReplacementNamed(context, '/welcome');
+      if (mounted) Navigator.pushReplacementNamed(context, '/welcome');
     }else{
       _showError(msg);
     }
