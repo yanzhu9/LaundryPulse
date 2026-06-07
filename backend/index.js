@@ -176,19 +176,28 @@ app.post("/api/queue-book", async (req, res) => {
     if (availableMachines.length > 0) {
       const targetMachine = availableMachines[0];
 
+      // Set 15-minute reservation window
+      const reservationEnd = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
       await supabase.from("Booking_Table").insert([
         {
           user_id: user_id,
           machine_id: targetMachine.machine_id,
-          booking_status: "using"
+          booking_status: "reserved"
         }
       ]);
 
       await supabase
         .from("Machine_Table")
-        .update({ machine_status: "occupied" })
+        .update({
+          machine_status: "occupied",
+          finished_at: reservationEnd   // reservation expires in 15 min
+        })
         .eq("machine_id", targetMachine.machine_id);
 
+      // FCM: notify user of successful booking
+      await sendNotification(user_id, "Booking Confirmed",
+        `Machine ${targetMachine.machine_id} is reserved for you. Please come down within 15 minutes.`);
       return res.json({
         success: true,
         message: `Allocated available machine successfully, your machine ID is ${targetMachine.machine_id}`,
@@ -352,10 +361,18 @@ app.post('/api/machines/:id/start', async (req, res) => {
     const addMin = machine_id.startsWith('W') ? 34 : 30;
     const finishedAt = new Date(Date.now() + addMin * 60 * 1000).toISOString();
 
+    // Update machine wash end time
     await supabase
       .from('Machine_Table')
       .update({ finished_at: finishedAt })
       .eq('machine_id', machine_id);
+
+    // Update booking status from reserved → using
+    await supabase
+      .from('Booking_Table')
+      .update({ booking_status: 'using' })
+      .eq('machine_id', machine_id)
+      .eq('booking_status', 'reserved');
 
     return res.json({
       success: true,
@@ -522,6 +539,80 @@ setInterval(async () => {
     }
   }
 
+}, 5000);
+
+// Check every 5 seconds: if a reserved machine is not claimed within 15 min → release it
+setInterval(async () => {
+  const now = new Date();
+
+  // Find occupied machines where booking is still 'reserved' and reservation has expired
+  const { data: expiredReservations } = await supabase
+    .from('Booking_Table')
+    .select('machine_id, user_id')
+    .eq('booking_status', 'reserved');
+
+  if (!expiredReservations) return;
+
+  for (const booking of expiredReservations) {
+    const { data: machine } = await supabase
+      .from('Machine_Table')
+      .select('finished_at, machine_status')
+      .eq('machine_id', booking.machine_id)
+      .single();
+
+    if (!machine || machine.machine_status !== 'occupied') continue;
+    if (!machine.finished_at) continue;
+
+    const reservationEnd = new Date(machine.finished_at);
+    if (now < reservationEnd) continue; // still within reservation window
+
+    // Reservation expired → release machine
+    await supabase
+      .from('Machine_Table')
+      .update({ machine_status: 'available', finished_at: null })
+      .eq('machine_id', booking.machine_id);
+
+    await supabase
+      .from('Booking_Table')
+      .update({ booking_status: 'expired' })
+      .eq('machine_id', booking.machine_id)
+      .eq('booking_status', 'reserved');
+
+    // FCM: notify user reservation expired
+    await sendNotification(booking.user_id, "Reservation Expired",
+      `Your reservation for Machine ${booking.machine_id} has expired. The machine has been released.`);
+
+    console.log(`Machine ${booking.machine_id} reservation expired → available`);
+
+    // Check if there's a waiting user → assign them
+    const { data: nextUser } = await supabase
+      .from('Booking_Table')
+      .select('booking_id, user_id')
+      .eq('booking_status', 'waiting')
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .single();
+
+    if (nextUser) {
+      const newReservationEnd = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+      await supabase
+        .from('Machine_Table')
+        .update({ machine_status: 'occupied', finished_at: newReservationEnd })
+        .eq('machine_id', booking.machine_id);
+
+      await supabase
+        .from('Booking_Table')
+        .update({ booking_status: 'reserved', machine_id: booking.machine_id })
+        .eq('booking_id', nextUser.booking_id);
+
+      // FCM: notify next user it's their turn
+      await sendNotification(nextUser.user_id, "It's Your Turn",
+        `Machine ${booking.machine_id} is now reserved for you. Please come down within 15 minutes.`);
+
+      console.log(`Machine ${booking.machine_id} assigned to next user ${nextUser.user_id}`);
+    }
+  }
 }, 5000);
 
 // test endpoint to verify backend and database connection
