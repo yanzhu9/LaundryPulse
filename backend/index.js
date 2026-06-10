@@ -164,7 +164,6 @@ app.post("/api/queue-book", async (req, res) => {
   try {
     const { user_id, type } = req.body;
 
-    //find whether there is an available machine
     const { data: availableMachines } = await supabase
       .from("Machine_Table")
       .select("*")
@@ -172,18 +171,16 @@ app.post("/api/queue-book", async (req, res) => {
       .eq("machine_status", "available")
       .order("machine_id", { ascending: true });
 
-    // if there is an available machine
     if (availableMachines.length > 0) {
       const targetMachine = availableMachines[0];
-
-      // Set 15-minute reservation window
-      const reservationEnd = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+      // Set reservation end time = now + 15 minutes, stored in reserved_end_at
+      const reservedEnd = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
       await supabase.from("Booking_Table").insert([
         {
           user_id: user_id,
           machine_id: targetMachine.machine_id,
-          booking_status: "reserved"
+          booking_status: "using"
         }
       ]);
 
@@ -191,18 +188,11 @@ app.post("/api/queue-book", async (req, res) => {
         .from("Machine_Table")
         .update({
           machine_status: "occupied",
-          finished_at: reservationEnd   // reservation expires in 15 min
+          reserved_end_at: reservedEnd,
+          finished_at: null, // Set finished_at to null, will be updated when washing is finished
+          pickup_end_at: null
         })
         .eq("machine_id", targetMachine.machine_id);
-
-      // FCM: notify user of successful booking
-      //await sendNotification(user_id, "Booking Confirmed",
-        //`Machine ${targetMachine.machine_id} is reserved for you. Please come down within 15 minutes.`);
-      //return res.json({
-        //success: true,
-        //message: `Allocated available machine successfully, your machine ID is ${targetMachine.machine_id}`,
-        //machine: targetMachine
-      //});
 
       return res.json({
         success: true,
@@ -210,20 +200,17 @@ app.post("/api/queue-book", async (req, res) => {
         machine: targetMachine
       });
     } else {
-      // no available machine, add to queue
       await supabase.from("Booking_Table").insert([
         {
           user_id: user_id,
           booking_status: "waiting"
         }
       ]);
-
       return res.json({
         success: true,
         message: "No available machine, added to queue"
       });
     }
-
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -311,10 +298,9 @@ app.post("/api/release-machine", async (req, res) => {
 app.get('/getMachineInfo', async (req, res) => {
   try {
     const mid = req.query.mid;
-
     const { data: machData } = await supabase
       .from('Machine_Table')
-      .select('finished_at, machine_status')
+      .select('finished_at, reserved_end_at, pickup_end_at, machine_status')
       .eq('machine_id', mid)
       .single();
 
@@ -325,20 +311,32 @@ app.get('/getMachineInfo', async (req, res) => {
       .eq('booking_status', 'waiting');
 
     let remainSec = 0;
+    let reservedRemainSec = 0;
+    let pickupRemainSec = 0;
+    const nowMs = Date.now();
+
     if (machData?.finished_at) {
-      const nowMs = Date.now();
-      const endMs = new Date(machData.finished_at).getTime();
-      remainSec = Math.round((endMs - nowMs) / 1000);
+      remainSec = Math.round((new Date(machData.finished_at).getTime() - nowMs) / 1000);
       if (remainSec < 0) remainSec = 0;
+    }
+    if (machData?.reserved_end_at) {
+      reservedRemainSec = Math.round((new Date(machData.reserved_end_at).getTime() - nowMs) / 1000);
+      if (reservedRemainSec < 0) reservedRemainSec = 0;
+    }
+    if (machData?.pickup_end_at) {
+      pickupRemainSec = Math.round((new Date(machData.pickup_end_at).getTime() - nowMs) / 1000);
+      if (pickupRemainSec < 0) pickupRemainSec = 0;
     }
 
     res.json({
       remain_seconds: remainSec,
+      reserved_remain_seconds: reservedRemainSec,
+      pickup_remain_seconds: pickupRemainSec,
       ahead_count: waitCnt ?? 0,
       machine_status: machData?.machine_status ?? 'occupied'
     });
   } catch (err) {
-    res.json({ remain_seconds: 0, ahead_count: 0, machine_status: 'occupied' });
+    res.json({ remain_seconds: 0, reserved_remain_seconds: 0, pickup_remain_seconds: 0, ahead_count: 0, machine_status: 'occupied' });
   }
 });
 
@@ -357,27 +355,21 @@ app.post('/api/machines/:id/start', async (req, res) => {
     if (getError || !machine) {
       return res.status(404).json({ success: false, message: 'Machine not found' });
     }
-
     if (machine.machine_status !== 'occupied') {
       return res.status(400).json({ success: false, message: 'Machine is not in occupied state' });
     }
 
-    // Washer (W-xx): 34 minutes, Dryer (D-xx): 30 minutes
+    // Assume wash duration is 30 min for dryers and 34 min for washers (including drying time)
     const addMin = machine_id.startsWith('W') ? 34 : 30;
     const finishedAt = new Date(Date.now() + addMin * 60 * 1000).toISOString();
 
-    // Update machine wash end time
     await supabase
       .from('Machine_Table')
-      .update({ finished_at: finishedAt })
+      .update({
+        finished_at: finishedAt,
+        reserved_end_at: null // clear reservation end time since cycle has started
+      })
       .eq('machine_id', machine_id);
-
-    // Update booking status from reserved → using
-    await supabase
-      .from('Booking_Table')
-      .update({ booking_status: 'using' })
-      .eq('machine_id', machine_id)
-      .eq('booking_status', 'reserved');
 
     return res.json({
       success: true,
@@ -385,7 +377,6 @@ app.post('/api/machines/:id/start', async (req, res) => {
       machine_id: machine_id,
       finished_at: finishedAt
     });
-
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -430,88 +421,39 @@ app.post('/finishCycle', async (req, res) => {
   }
 });
 
-// POST /api/machines/:id/finish
-// Mark wash cycle as finished → set status to grace-period, start 15-minute countdown
-app.post("/api/machines/:id/finish", async (req, res) => {
-  try {
-    const machine_id = req.params.id;
-
-    const { data: machine, error: getError } = await supabase
-      .from("Machine_Table")
-      .select("*")
-      .eq("machine_id", machine_id)
-      .single();
-
-    if (getError || !machine) {
-      return res.status(404).json({ success: false, message: "Machine not found" });
-    }
-
-    if (machine.machine_status !== "occupied") {
-      return res.status(400).json({ success: false, message: "Machine is not in occupied state" });
-    }
-
-    // Set grace_end_time = now + 15 minutes, stored in finished_at
-    const graceEndTime = new Date(Date.now() + 15 * 60 * 1000);
-
-    await supabase
-      .from("Machine_Table")
-      .update({
-        machine_status: "grace-period",
-        finished_at: graceEndTime.toISOString()
-      })
-      .eq("machine_id", machine_id);
-
-    // TODO: Send FCM push notification to user
-    // "Your laundry is done, please collect within 15 minutes"
-
-    return res.json({
-      success: true,
-      message: `Machine ${machine_id} wash cycle finished. 15-minute grace period started.`,
-      machine_id: machine_id,
-      grace_end_time: graceEndTime
-    });
-
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // POST /api/machines/:id/collect
 // User confirms clothes collected → set status back to available
-app.post("/api/machines/:id/collect", async (req, res) => {
+app.post("/api/machines/:id/pickup", async (req, res) => {
   try {
     const machine_id = req.params.id;
-
     const { data: machine, error: getError } = await supabase
       .from("Machine_Table")
       .select("*")
       .eq("machine_id", machine_id)
       .single();
 
-    if (getError || !machine) {
-      return res.status(404).json({ success: false, message: "Machine not found" });
+    if (getError || !machine || machine.machine_status !== "occupied") {
+      return res.status(400).json({ success: false, message: "Invalid pick-up state" });
     }
 
-    if (machine.machine_status !== "grace-period" && machine.machine_status !== "overdue") {
-      return res.status(400).json({ success: false, message: "Machine is not in grace-period or overdue state" });
-    }
+    // 1. Update booking status to "finished"
+    await supabase
+      .from("Booking_Table")
+      .update({ booking_status: "finished" })
+      .eq("machine_id", machine_id)
+      .eq("booking_status", "using");
 
+    // 2. Set machine status to "available" and clear timestamps
     await supabase
       .from("Machine_Table")
       .update({
         machine_status: "available",
+        pickup_end_at: null,
         finished_at: null
       })
       .eq("machine_id", machine_id);
 
-    // TODO: Send FCM push notification "Clothes collected successfully"
-
-    return res.json({
-      success: true,
-      message: `Machine ${machine_id} is now available.`,
-      machine_id: machine_id
-    });
-
+    return res.json({ success: true, message: "Pick-up completed, machine released" });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -549,76 +491,89 @@ setInterval(async () => {
 }, 5000);
 
 // Check every 5 seconds: if a reserved machine is not claimed within 15 min → release it
+// if reserved_end_at has passed but cycle hasn't started → mark as available and update booking status to "cancelled"
 setInterval(async () => {
   const now = new Date();
-
-  // Find occupied machines where booking is still 'reserved' and reservation has expired
   const { data: expiredReservations } = await supabase
-    .from('Booking_Table')
-    .select('machine_id, user_id')
-    .eq('booking_status', 'reserved');
+    .from('Machine_Table')
+    .select('machine_id, reserved_end_at')
+    .eq('machine_status', 'occupied')
+    .not('reserved_end_at', 'is', null);
 
   if (!expiredReservations) return;
+  for (const machine of expiredReservations) {
+    const reservedEnd = new Date(machine.reserved_end_at);
+    if (now < reservedEnd) continue;
 
-  for (const booking of expiredReservations) {
-    const { data: machine } = await supabase
-      .from('Machine_Table')
-      .select('finished_at, machine_status')
-      .eq('machine_id', booking.machine_id)
-      .single();
-
-    if (!machine || machine.machine_status !== 'occupied') continue;
-    if (!machine.finished_at) continue;
-
-    const reservationEnd = new Date(machine.finished_at);
-    if (now < reservationEnd) continue; // still within reservation window
-
-    // Reservation expired → release machine
     await supabase
       .from('Machine_Table')
-      .update({ machine_status: 'available', finished_at: null })
-      .eq('machine_id', booking.machine_id);
+      .update({
+        machine_status: 'available',
+        reserved_end_at: null
+      })
+      .eq('machine_id', machine.machine_id);
 
     await supabase
       .from('Booking_Table')
-      .update({ booking_status: 'expired' })
-      .eq('machine_id', booking.machine_id)
-      .eq('booking_status', 'reserved');
+      .update({ booking_status: 'finish' })
+      .eq('machine_id', machine.machine_id)
+      .eq('booking_status', 'using');
 
-    // FCM: notify user reservation expired
-    await sendNotification(booking.user_id, "Reservation Expired",
-      `Your reservation for Machine ${booking.machine_id} has expired. The machine has been released.`);
+    console.log(`Machine ${machine.machine_id} reservation expired → available`);
+  }
+}, 5000);
 
-    console.log(`Machine ${booking.machine_id} reservation expired → available`);
+// Check every 5 seconds: if a machine's finished_at has passed but pickup_end_at is not set → set pickup_end_at = now + 15 minutes and mark as waiting for pickup
+setInterval(async () => {
+  const now = new Date();
+  const { data: washingEndList } = await supabase
+    .from("Machine_Table")
+    .select("machine_id, finished_at, pickup_end_at")
+    .eq("machine_status", "occupied")
+    .not("finished_at", "is", null)
+    .is("pickup_end_at", null);
 
-    // Check if there's a waiting user → assign them
-    const { data: nextUser } = await supabase
-      .from('Booking_Table')
-      .select('booking_id, user_id')
-      .eq('booking_status', 'waiting')
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .single();
+  if (!washingEndList) return;
+  for (const m of washingEndList) {
+    const finishTime = new Date(m.finished_at);
+    if (now < finishTime) continue;
 
-    if (nextUser) {
-      const newReservationEnd = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    const pickupEnd = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+    await supabase
+      .from("Machine_Table")
+      .update({
+        pickup_end_at: pickupEnd,
+        finished_at: null // clear finished_at since washing is done, now it's in pickup waiting state
+      })
+      .eq("machine_id", m.machine_id);
 
-      await supabase
-        .from('Machine_Table')
-        .update({ machine_status: 'occupied', finished_at: newReservationEnd })
-        .eq('machine_id', booking.machine_id);
+    console.log(`Machine ${m.machine_id} wash finished, 15-min pickup window started`);
+  }
+}, 5000);
 
-      await supabase
-        .from('Booking_Table')
-        .update({ booking_status: 'reserved', machine_id: booking.machine_id })
-        .eq('booking_id', nextUser.booking_id);
+// if pickup_end_at has passed but user hasn't confirmed pickup → mark as overdue and send notification
+setInterval(async () => {
+  const now = new Date();
+  const { data: pickupExpireList } = await supabase
+    .from("Machine_Table")
+    .select("machine_id, pickup_end_at")
+    .eq("machine_status", "occupied")
+    .not("pickup_end_at", "is", null);
 
-      // FCM: notify next user it's their turn
-      //await sendNotification(nextUser.user_id, "It's Your Turn",
-        //`Machine ${booking.machine_id} is now reserved for you. Please come down within 15 minutes.`);
+  if (!pickupExpireList) return;
+  for (const m of pickupExpireList) {
+    const pickupEnd = new Date(m.pickup_end_at);
+    if (now < pickupEnd) continue;
 
-      console.log(`Machine ${booking.machine_id} assigned to next user ${nextUser.user_id}`);
-    }
+    await supabase
+      .from("Machine_Table")
+      .update({
+        machine_status: "overdue",
+        pickup_end_at: null
+      })
+      .eq("machine_id", m.machine_id);
+
+    console.log(`Machine ${m.machine_id} pickup expired → overdue`);
   }
 }, 5000);
 
@@ -647,4 +602,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
-
