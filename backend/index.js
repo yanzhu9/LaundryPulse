@@ -196,13 +196,13 @@ app.post("/api/queue-book", async (req, res) => {
         .eq("machine_id", targetMachine.machine_id);
 
       // FCM: notify user of successful booking
-      await sendNotification(user_id, "Booking Confirmed",
-        `Machine ${targetMachine.machine_id} is reserved for you. Please come down within 15 minutes.`);
-      return res.json({
-        success: true,
-        message: `Allocated available machine successfully, your machine ID is ${targetMachine.machine_id}`,
-        machine: targetMachine
-      });
+      //await sendNotification(user_id, "Booking Confirmed",
+        //`Machine ${targetMachine.machine_id} is reserved for you. Please come down within 15 minutes.`);
+      //return res.json({
+        //success: true,
+        //message: `Allocated available machine successfully, your machine ID is ${targetMachine.machine_id}`,
+        //machine: targetMachine
+      //});
 
     } else {
       // no available machine, add to queue
@@ -535,6 +535,8 @@ setInterval(async () => {
         .eq("machine_id", m.machine_id);
 
       // TODO: Send FCM push notification "Please collect your laundry immediately"
+      //await sendNotification(m.user_id, "Laundry Done",
+        //`Your laundry in Machine ${m.machine_id} is done. Please collect it immediately.`);
       console.log(`Machine ${m.machine_id} grace period expired → overdue`);
     }
   }
@@ -607,8 +609,8 @@ setInterval(async () => {
         .eq('booking_id', nextUser.booking_id);
 
       // FCM: notify next user it's their turn
-      await sendNotification(nextUser.user_id, "It's Your Turn",
-        `Machine ${booking.machine_id} is now reserved for you. Please come down within 15 minutes.`);
+      //await sendNotification(nextUser.user_id, "It's Your Turn",
+        //`Machine ${booking.machine_id} is now reserved for you. Please come down within 15 minutes.`);
 
       console.log(`Machine ${booking.machine_id} assigned to next user ${nextUser.user_id}`);
     }
