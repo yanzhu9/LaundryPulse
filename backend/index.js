@@ -204,6 +204,11 @@ app.post("/api/queue-book", async (req, res) => {
         //machine: targetMachine
       //});
 
+      return res.json({
+        success: true,
+        message: `Allocated available machine successfully, your machine ID is ${targetMachine.machine_id}. Please come down within 15 minutes.`,
+        machine: targetMachine
+      });
     } else {
       // no available machine, add to queue
       await supabase.from("Booking_Table").insert([
@@ -642,3 +647,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
+
