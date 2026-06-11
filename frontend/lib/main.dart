@@ -6,8 +6,6 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
 import 'pages/globals.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
 
 enum MachineStatus {
   available,
@@ -26,14 +24,7 @@ class LaundryMachine {
   });
 }
 
-Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
-}
-
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+void main() {
   runApp(const MyApp());
 }
 
@@ -194,16 +185,17 @@ class _HomePageState extends State<HomePage> {
   List<LaundryMachine> machines = [];
   Timer? timer;
 
-  @override
-  void initState() {
-    super.initState();
+@override
+void initState() {
+  super.initState();
+  () async {
+    await fetchRealMachineData();
+  }();
 
-    fetchRealMachineData(); // Fetch real machine data from backend
-    
-    timer = Timer.periodic(const Duration(seconds: 5), (timer) {
-      fetchRealMachineData();// Set up periodic timer to fetch real machine data every 5 seconds
-    });
-  }
+  timer = Timer.periodic(const Duration(seconds: 5), (timer) async {
+    await fetchRealMachineData();
+  });
+}
 
 //close the timer if leaving the page
 @override
@@ -212,43 +204,36 @@ void dispose() {
   super.dispose();
 }
 
-Future<void> fetchRealMachineData() async {
+  Future<void> fetchRealMachineData() async {
   final res = await http.get(Uri.parse("https://laundrypulse.onrender.com/machines"));
-  
   List<dynamic> rawList = jsonDecode(res.body);
-
   rawList.sort((a, b) => a["machine_id"].compareTo(b["machine_id"]));
-  
-  setState(() {
-    machines = rawList.map((item){
 
-      String statusStr = item["machine_status"];
-
-      MachineStatus st;
-      switch(statusStr){
-        case "available":
-          st = MachineStatus.available;
-          break;
-        case "occupied":
-          st = MachineStatus.occupied;
-          break;
-        case "overdue":
-          st = MachineStatus.overdue;
-          break;
-        case "outOfService":
-          st = MachineStatus.outOfService;
-          break;
-        default:
-          st = MachineStatus.available;
-      }
-
-      return LaundryMachine(
-        id: item["machine_id"],
-        status: st
-      );
-
-    }).toList();
-  });
+  if (mounted) {
+    setState(() {
+      machines = rawList.map((item) {
+        String statusStr = item["machine_status"];
+        MachineStatus st;
+        switch (statusStr) {
+          case "available":
+            st = MachineStatus.available;
+            break;
+          case "occupied":
+            st = MachineStatus.occupied;
+            break;
+          case "overdue":
+            st = MachineStatus.overdue;
+            break;
+          case "outOfService":
+            st = MachineStatus.outOfService;
+            break;
+          default:
+            st = MachineStatus.available;
+        }
+        return LaundryMachine(id: item["machine_id"], status: st);
+      }).toList();
+    });
+  }
 }
 
   Color _getStatusColor(MachineStatus status) {
@@ -422,9 +407,11 @@ Future<void> queueDryer() async {
 
   var result = jsonDecode(res.body);
 
-  ScaffoldMessenger.of(context).showSnackBar(
-     SnackBar(content: Text(result["message"]))
-  );
+   if(result["success"] == true){
+    ScaffoldMessenger.of(context).showSnackBar(
+       SnackBar(content: Text(result["message"]))
+    );
+  }
 }
 
   @override
@@ -529,10 +516,171 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 }
 
-class RealTimeWaitTimePage extends StatelessWidget {
+// Real-time Wait Time Page for Occupied Machines (Stateful Widget)
+class RealTimeWaitTimePage extends StatefulWidget {
   final String machineId;
-
   const RealTimeWaitTimePage({super.key, required this.machineId});
+
+  @override
+  State<RealTimeWaitTimePage> createState() => _RealTimeWaitTimePageState();
+}
+
+class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
+  int remainTotalSec = 0;
+  int reservedSec = 0;
+  int pickupSec = 0;
+  int aheadPeople = 0;
+  bool washingStarted = false;
+  bool isPickupWindow = false;
+  bool isLoading = false;
+  String machineStatus = "occupied";
+
+  // backend polling timer
+  Timer? _refreshTimer;
+  // frontend local countdown timer (only active during washing)
+  Timer? _localCountdownTimer;
+
+  final String baseUrl = "https://laundrypulse.onrender.com";
+
+  @override
+  void initState() {
+    super.initState();
+    // when page loads, immediately fetch machine info to initialize all states and decide UI rendering logic
+    fetchMachineInfo();
+    // set up a timer to poll backend every 5 seconds for the latest machine info, ensuring data freshness and state accuracy (especially for overdue detection)
+    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      if (mounted) fetchMachineInfo();
+    });
+  }
+
+  @override
+  void dispose() {
+    // when leaving the page, cancel all timers to prevent memory leaks and unintended state updates
+    _refreshTimer?.cancel();
+    _stopLocalCountdown();
+    super.dispose();
+  }
+
+  // get machine info from backend, update all relevant states, and handle key logic for local countdown and overdue detection
+  Future<void> fetchMachineInfo() async {
+    try {
+      final res = await http.get(Uri.parse("$baseUrl/getMachineInfo?mid=${widget.machineId}"));
+      final map = jsonDecode(res.body);
+      setState(() {
+        remainTotalSec = map["remain_seconds"] ?? 0;
+        reservedSec = map["reserved_remain_seconds"] ?? 0;
+        pickupSec = map["pickup_remain_seconds"] ?? 0;
+        aheadPeople = map["ahead_count"] ?? 0;
+        machineStatus = map["machine_status"] ?? "occupied";
+        washingStarted = remainTotalSec > 0;
+        isPickupWindow = pickupSec > 0;
+      });
+
+      // if washing has started, kick off the local countdown timer to achieve smooth second-by-second decrement in the UI without waiting for backend polling; if washing hasn't started, ensure any existing local countdown is stopped to prevent stale timers
+      if (washingStarted) {
+        _startLocalCountdown();
+      } else {
+        _stopLocalCountdown();
+      }
+
+      // if machine is detected as overdue, immediately navigate to the overdue handling page to prompt user action, ensuring this critical state is addressed without delay
+      if (machineStatus == "overdue" && mounted) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => OverdueHandlingPage(machineId: widget.machineId)),
+        );
+      }
+    } catch (e) {
+      debugPrint("Failed to fetch machine info: $e");
+    }
+  }
+
+  void _startLocalCountdown() {
+    // ensure any existing local countdown timer is stopped before starting a new one, preventing multiple timers from running simultaneously which could cause state inconsistencies and memory leaks
+    _stopLocalCountdown();
+    // start a new timer that ticks every second, decrementing the remaining seconds and updating the UI accordingly; if the timer detects that the remaining seconds have reached zero, it stops itself and triggers a fresh fetch from the backend to confirm the machine's status and update the UI (especially important for transitioning to the pick-up window or detecting overdue state)
+    _localCountdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        _stopLocalCountdown();
+        return;
+      }
+      setState(() {
+        if (remainTotalSec > 0) {
+          remainTotalSec--;
+        } else {
+          // when local countdown reaches zero, stop the timer and fetch latest machine info from backend to confirm status (e.g., transition to pick-up window or detect overdue)
+          _stopLocalCountdown();
+          fetchMachineInfo();
+        }
+      });
+    });
+  }
+
+  // a helper function to stop and nullify the local countdown timer, ensuring that we don't have multiple timers running simultaneously which could lead to memory leaks and inconsistent state updates; this function is called both when washing starts (to reset any existing timer) and when washing ends (to clean up the timer)
+  void _stopLocalCountdown() {
+    _localCountdownTimer?.cancel();
+    _localCountdownTimer = null;
+  }
+
+  // clicking the "Start Washing" button will trigger this function, which sends a request to the backend to start the washing process; upon successful response, it fetches the latest machine info to update the UI (e.g., show the countdown timer); if there's an error during the request, it shows a snackbar with an error message; throughout the process, it manages a loading state to disable the button and show a loading indicator while the request is in progress
+  Future<void> startWashing() async {
+    setState(() => isLoading = true);
+    try {
+      final res = await http.post(
+        Uri.parse("$baseUrl/api/machines/${widget.machineId}/start"),
+        headers: {"Content-Type": "application/json"},
+      );
+      final map = jsonDecode(res.body);
+      if (map["success"] == true) {
+        await fetchMachineInfo();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Washing started! Timer is running."), backgroundColor: Colors.green),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to start. Please try again."), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  // clicking the "Collect Clothes" button will trigger this function, which sends a request to the backend to collect the laundry; upon successful response, it shows a snackbar and navigates back to the previous page; if there's an error during the request, it shows a snackbar with an error message; throughout the process, it manages a loading state to disable the button and show a loading indicator while the request is in progress
+  Future<void> pickUpLaundry() async {
+    setState(() => isLoading = true);
+    try {
+      final res = await http.post(
+        Uri.parse("$baseUrl/api/machines/${widget.machineId}/pickup"),
+        headers: {"Content-Type": "application/json"},
+      );
+      final map = jsonDecode(res.body);
+      if (map["success"] == true && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Clothes collected! Machine is now available."), backgroundColor: Colors.green),
+        );
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed. Please try again."), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  String formatMMSS(int totalSec) {
+    int min = totalSec ~/ 60;
+    int sec = totalSec % 60;
+    return "${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}";
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -540,11 +688,132 @@ class RealTimeWaitTimePage extends StatelessWidget {
       appBar: AppBar(
         backgroundColor: const Color.fromARGB(255, 147, 187, 243),
         centerTitle: true,
-        title: Text('Wait Time for $machineId'),
+        title: Text('Machine ${widget.machineId}'),
+        leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const SizedBox(height: 60),
+
+            // 1. pick-up window stage: show a prominent message with a call-to-action button to collect clothes, and disable the button while the pick-up request is in progress to prevent duplicate requests; this stage only appears when the backend indicates that the machine is in the pick-up window (i.e., washing has ended but clothes haven't been collected yet)
+            if (isPickupWindow)
+              Column(
+                children: [
+                  const Icon(Icons.check_circle_outline, size: 80, color: Colors.orange),
+                  const SizedBox(height: 16),
+                  const Text(
+                    "Washing Done!",
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    "Please collect your clothes within 15 minutes.",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 15, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 32),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: isLoading ? null : pickUpLaundry,
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 18),
+                        backgroundColor: Colors.green,
+                      ),
+                      child: isLoading
+                          ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                          : const Text("Pick Up ✓", style: TextStyle(fontSize: 18, color: Colors.white)),
+                    ),
+                  ),
+                ],
+              )
+
+            // 2. washing in progress stage: show a large circular timer with the remaining time, and display the number of people ahead in the queue; this stage is only shown when the backend indicates that washing has started (i.e., remainTotalSec > 0), and it relies on both backend polling and local countdown to keep the timer accurate and responsive
+            else if (washingStarted)
+              Column(
+                children: [
+                  Transform.translate(
+                    offset: const Offset(0, -60),
+                    child: Align(
+                      alignment: const Alignment(0, 0),
+                      child: Container(
+                        width: 270,
+                        height: 270,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.blue, width: 7),
+                      ),
+                      child: Center(
+                        child: Text(
+                          formatMMSS(remainTotalSec),
+                          style: const TextStyle(fontSize: 52, fontWeight: FontWeight.bold, color: Colors.black),
+                        ),
+                      ),
+                    ),
+                  )
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    "Waiting Ahead: $aheadPeople",
+                    style: const TextStyle(fontSize: 19),
+                  ),
+                ],
+              )
+
+            // 3. reserved but not started stage: show a prompt to start washing, and disable the button while the start request is in progress to prevent duplicate requests; this stage appears when the backend indicates that the user has reserved the machine (i.e., reservedSec > 0) but washing hasn't started yet (i.e., remainTotalSec == 0), guiding the user to take action and ensuring a smooth transition to the washing stage once they hit start
+            else if (reservedSec > 0)
+              Column(
+                children: [
+                  const Icon(Icons.local_laundry_service, size: 100, color: Colors.blue),
+                  const SizedBox(height: 24),
+                  const Text(
+                    "Ready to wash?",
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    "Press Start Washing when you load your clothes.",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 15, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 32),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: isLoading ? null : startWashing,
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 18),
+                        backgroundColor: Colors.blue,
+                      ),
+                      child: isLoading
+                          ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                          : const Text("Start Washing", style: TextStyle(fontSize: 18, color: Colors.white)),
+                    ),
+                  ),
+                ],
+              ),
+            const SizedBox(height: 40),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                "Note: A 15-min pick-up window opens after each cycle ends. Please arrange your time properly.",
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
-} 
+}
 
 class OverdueHandlingPage extends StatelessWidget {
   final String machineId;
