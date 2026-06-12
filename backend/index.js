@@ -608,6 +608,7 @@ app.get('/', (req, res) => {
 app.post('/update-fcm-token', async (req, res) => {
   try {
     const { user_id, fcm_token } = req.body;
+    console.log("收到的请求体:", req.body); // 打印请求体，确认参数是否正确
 
     if (!user_id || !fcm_token) {
       return res.status(400).json({
@@ -616,10 +617,19 @@ app.post('/update-fcm-token', async (req, res) => {
       });
     }
 
-    await pool.query(
-      'UPDATE users SET fcm_token = $1 WHERE id = $2',
+    console.log("执行 SQL: UPDATE users SET fcm_token = $1 WHERE id = $2", [fcm_token, user_id]);
+    const result = await pool.query(
+      'UPDATE users SET fcm_token = $1 WHERE id = $2 RETURNING id',
       [fcm_token, user_id]
     );
+
+    console.log("SQL 执行结果:", result.rows); // 打印 SQL 执行结果
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found (invalid UUID)"
+      });
+    }
 
     return res.json({
       success: true,
@@ -627,14 +637,14 @@ app.post('/update-fcm-token', async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Failed to update FCM token:", error);
+    console.error("更新 FCM Token 失败，错误详情:", error); // 打印完整错误
     return res.status(500).json({
       success: false,
-      message: "Server error, please try again later"
+      message: "Server error, please try again later",
+      error: error.message // 开发环境可以返回错误详情，方便排查
     });
   }
 });
-
 app.get('/test-db', async (req, res) => {
   try {
     const { data, error } = await supabase.from('User_Table').select().limit(1);
