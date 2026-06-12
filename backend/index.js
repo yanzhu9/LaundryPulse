@@ -600,13 +600,12 @@ setInterval(async () => {
   }
 }, 5000);
 
-// Endpoint for frontend to update user's FCM token
 app.post('/update-fcm-token', async (req, res) => {
   try {
     const { user_id, fcm_token } = req.body;
-    console.log("[FCM] get request:", { user_id, fcm_token });
+    console.log("[FCM] Received request:", { user_id, fcm_token });
 
-    // basic validation
+    // 1. Parameter validation
     if (!user_id || !fcm_token) {
       return res.status(400).json({
         success: false,
@@ -614,35 +613,45 @@ app.post('/update-fcm-token', async (req, res) => {
       });
     }
 
-    // Supabase PostgreSQL client for direct SQL query (for better control and debugging)
-    const result = await pool.query(
-      `UPDATE users 
-       SET fcm_token = $1 
-       WHERE id = $2 
-       RETURNING id`, 
-      [fcm_token, user_id]
-    );
+    // 2. Update the user's fcm_token using the Supabase SDK
+    const { data, error } = await supabase
+      .from('users')
+      .update({ fcm_token: fcm_token })
+      .eq('id', user_id)
+      .select('id'); // Return the updated user ID for debugging
 
-    console.log("[FCM] SQL executed result:", result.rows);
+    // 3. Handle Supabase errors
+    if (error) {
+      console.error("[FCM] Supabase error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update FCM token",
+        error: error.message
+      });
+    }
 
-    if (result.rows.length === 0) {
+    // 4. Check if any user was updated
+    if (!data || data.length === 0) {
       return res.status(404).json({
         success: false,
         message: "User not found (invalid UUID)"
       });
     }
 
+    // 5. Return a success response
     return res.json({
       success: true,
-      message: "FCM token updated successfully"
+      message: "FCM token updated successfully",
+      data: data
     });
 
   } catch (err) {
-    console.error("[FCM] failed to update FCM token:", err);
+    // Catch other unexpected errors
+    console.error("[FCM] Server error:", err);
     return res.status(500).json({
       success: false,
       message: "Server error, please try again later",
-      error: err.message 
+      error: err.message
     });
   }
 });
