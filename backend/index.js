@@ -140,6 +140,7 @@ app.post('/login', async (req, res) => {
     });
 
   } catch (err) {
+    console.error("Login error details:", err);
     return res.json({
       success: false,
       msg: "Login failed. Please try again later."
