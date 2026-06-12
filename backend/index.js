@@ -605,6 +605,36 @@ app.get('/', (req, res) => {
   res.send('Backend deployed successfully! Connected to Supabase database.');
 });
 
+app.post('/update-fcm-token', async (req, res) => {
+  try {
+    const { user_id, fcm_token } = req.body;
+
+    if (!user_id || !fcm_token) {
+      return res.status(400).json({
+        success: false,
+        message: "user_id and fcm_token are required"
+      });
+    }
+
+    await pool.query(
+      'UPDATE users SET fcm_token = $1 WHERE id = $2',
+      [fcm_token, user_id]
+    );
+
+    return res.json({
+      success: true,
+      message: "FCM token updated successfully"
+    });
+
+  } catch (error) {
+    console.error("Failed to update FCM token:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error, please try again later"
+    });
+  }
+});
+
 app.get('/test-db', async (req, res) => {
   try {
     const { data, error } = await supabase.from('User_Table').select().limit(1);
