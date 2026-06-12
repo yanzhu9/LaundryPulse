@@ -10,6 +10,7 @@ import 'pages/globals.dart';
 enum MachineStatus {
   available,
   occupied,
+  gracePeriod,
   overdue,
   outOfService,
 }
@@ -221,6 +222,9 @@ void dispose() {
           case "occupied":
             st = MachineStatus.occupied;
             break;
+          case "grace-period":
+            st = MachineStatus.gracePeriod;
+            break;
           case "overdue":
             st = MachineStatus.overdue;
             break;
@@ -241,16 +245,19 @@ void dispose() {
       case MachineStatus.available:
         return Colors.green.shade100;
       case MachineStatus.occupied:
-        return Colors.blue.shade100; 
+        return Colors.blue.shade100;
+      case MachineStatus.gracePeriod:
+        return Colors.orange.shade100;
       case MachineStatus.overdue:
-        return Colors.red.shade100;   
+        return Colors.red.shade100;
       case MachineStatus.outOfService:
         return Colors.grey.shade100;
     }
   }
 
    void _onMachineTap(LaundryMachine machine) {
-    if (machine.status == MachineStatus.occupied) {
+    if (machine.status == MachineStatus.occupied ||
+        machine.status == MachineStatus.gracePeriod) {
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -269,6 +276,7 @@ void dispose() {
 
   Widget _buildMachineCard(LaundryMachine machine) {
     final isClickable = machine.status == MachineStatus.occupied ||
+        machine.status == MachineStatus.gracePeriod ||
         machine.status == MachineStatus.overdue;
 
     return GestureDetector(
@@ -318,6 +326,13 @@ void dispose() {
                   Container(width:8, height:8, color:  Colors.blue.shade100),
                   SizedBox(width: 4,),
                   Text("Occupied"),
+                ],
+              ),
+              Row(
+                children: [
+                  Container(width:8, height:8, color: Colors.orange.shade100),
+                  SizedBox(width: 4,),
+                  Text("Grace Period"),
                 ],
               ),
               Row(
