@@ -600,11 +600,6 @@ setInterval(async () => {
   }
 }, 5000);
 
-// test endpoint to verify backend and database connection
-app.get('/', (req, res) => {
-  res.send('Backend deployed successfully! Connected to Supabase database.');
-});
-
 // Endpoint for frontend to update user's FCM token
 app.post('/update-fcm-token', async (req, res) => {
   try {
@@ -652,15 +647,11 @@ app.post('/update-fcm-token', async (req, res) => {
   }
 });
 
-  } catch (error) {
-    console.error("更新 FCM Token 失败，错误详情:", error); // 打印完整错误
-    return res.status(500).json({
-      success: false,
-      message: "Server error, please try again later",
-      error: error.message // 开发环境可以返回错误详情，方便排查
-    });
-  }
+// test endpoint to verify backend and database connection
+app.get('/', (req, res) => {
+  res.send('Backend deployed successfully! Connected to Supabase database.');
 });
+
 app.get('/test-db', async (req, res) => {
   try {
     const { data, error } = await supabase.from('User_Table').select().limit(1);
