@@ -111,7 +111,7 @@ app.post('/login', async (req, res) => {
       });
     }
 
-    const { data: user, error: findError } = await supabase
+    const { data: users, error: findError } = await supabase
       .from('User_Table')
       .select('user_id, email, password')
       .eq('email', email)
