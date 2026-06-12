@@ -385,12 +385,10 @@ class _QueuePageState extends State<QueuePage> {
 
   var result = jsonDecode(res.body);
 
-  if(result["success"] == true){
     ScaffoldMessenger.of(context).showSnackBar(
        SnackBar(content: Text(result["message"]))
-    );
-  }
-}
+      );
+    }
 
 Future<void> queueDryer() async {
 
@@ -407,12 +405,10 @@ Future<void> queueDryer() async {
 
   var result = jsonDecode(res.body);
 
-   if(result["success"] == true){
     ScaffoldMessenger.of(context).showSnackBar(
        SnackBar(content: Text(result["message"]))
     );
   }
-}
 
   @override
   Widget build(BuildContext context) {
