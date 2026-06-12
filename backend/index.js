@@ -48,9 +48,9 @@ app.post('/register', async (req, res) => {
       .from('User_Table')
       .select('user_id')
       .eq('email', email)
-      .limit(1);
+      .single();
 
-    if (existingUser.length > 0) {
+    if (existingUser) {
       return res.json({
         success: false,
         msg: "This email is already registered. Please use another email."
