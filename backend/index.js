@@ -615,7 +615,7 @@ app.post('/update-fcm-token', async (req, res) => {
 
     // 2. Update the user's fcm_token using the Supabase SDK
     const { data, error } = await supabase
-      .from('users')
+      .from('User_Table')
       .update({ fcm_token: fcm_token })
       .eq('id', user_id)
       .select('id'); // Return the updated user ID for debugging
