@@ -123,7 +123,8 @@ app.post('/login', async (req, res) => {
         msg: "Email not found. Please check your email address."
       });
     }
-
+    const user = users[0];
+    
     // '!==' is used for strict comparison to avoid type coercion issues
     if (user.password !== password) {
       return res.json({
