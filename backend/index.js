@@ -117,7 +117,7 @@ app.post('/login', async (req, res) => {
       .eq('email', email)
       .limit(1);
 
-    if (findError || !users || user.length === 0) {
+    if (findError || !users || users.length === 0) {
       return res.json({
         success: false,
         msg: "Email not found. Please check your email address."
