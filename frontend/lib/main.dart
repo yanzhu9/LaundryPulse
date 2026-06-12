@@ -516,13 +516,114 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
+  String? email;
+  int? creditScore;
+  bool isLoading = true;
+  final String baseUrl = "https://laundrypulse.onrender.com";
+
+  @override
+  void initState() {
+    super.initState();
+    fetchProfile();
+  }
+
+  Future<void> fetchProfile() async {
+    try {
+      final res = await http.get(
+        Uri.parse("$baseUrl/api/user/${current_user_id}"),
+      );
+      final map = jsonDecode(res.body);
+      if (mounted) {
+        setState(() {
+          email = map["email"];
+          creditScore = map["credit_score"];
+          isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  Color _creditColor(int score) {
+    if (score >= 15) return Colors.green;
+    if (score >= 10) return Colors.orange;
+    return Colors.red;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
       color: Colors.white,
-      child: const Center(
-        child: Text("Profile Page"),
-      ),
+      child: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  const SizedBox(height: 40),
+                  const CircleAvatar(
+                    radius: 40,
+                    backgroundColor: Color.fromARGB(255, 215, 230, 243),
+                    child: Icon(Icons.person, size: 48, color: Colors.blueGrey),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    email ?? "Unknown",
+                    style: const TextStyle(fontSize: 16, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 32),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Column(
+                      children: [
+                        const Text("Credit Score", style: TextStyle(fontSize: 14, color: Colors.grey)),
+                        const SizedBox(height: 8),
+                        Text(
+                          "${creditScore ?? 0}",
+                          style: TextStyle(
+                            fontSize: 48,
+                            fontWeight: FontWeight.bold,
+                            color: _creditColor(creditScore ?? 0),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          (creditScore ?? 0) >= 15
+                              ? "✓ Eligible to join queue"
+                              : "✗ Below threshold — cannot join queue",
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: (creditScore ?? 0) >= 15 ? Colors.green : Colors.red,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade50,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Text(
+                      "💡 Help others by placing overdue clothes in lockers to earn +5 credits.\n"
+                      "⚠️ Declining to help deducts -5 credits.",
+                      style: TextStyle(fontSize: 13, color: Colors.blueGrey),
+                    ),
+                  ),
+                ],
+              ),
+            ),
     );
   }
 }
