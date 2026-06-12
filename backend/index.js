@@ -605,11 +605,13 @@ app.get('/', (req, res) => {
   res.send('Backend deployed successfully! Connected to Supabase database.');
 });
 
+// Endpoint for frontend to update user's FCM token
 app.post('/update-fcm-token', async (req, res) => {
   try {
     const { user_id, fcm_token } = req.body;
-    console.log("收到的请求体:", req.body); // 打印请求体，确认参数是否正确
+    console.log("[FCM] get request:", { user_id, fcm_token });
 
+    // basic validation
     if (!user_id || !fcm_token) {
       return res.status(400).json({
         success: false,
@@ -617,13 +619,17 @@ app.post('/update-fcm-token', async (req, res) => {
       });
     }
 
-    console.log("执行 SQL: UPDATE users SET fcm_token = $1 WHERE id = $2", [fcm_token, user_id]);
+    // Supabase PostgreSQL client for direct SQL query (for better control and debugging)
     const result = await pool.query(
-      'UPDATE users SET fcm_token = $1 WHERE id = $2 RETURNING id',
+      `UPDATE users 
+       SET fcm_token = $1 
+       WHERE id = $2 
+       RETURNING id`, 
       [fcm_token, user_id]
     );
 
-    console.log("SQL 执行结果:", result.rows); // 打印 SQL 执行结果
+    console.log("[FCM] SQL executed result:", result.rows);
+
     if (result.rows.length === 0) {
       return res.status(404).json({
         success: false,
@@ -635,6 +641,16 @@ app.post('/update-fcm-token', async (req, res) => {
       success: true,
       message: "FCM token updated successfully"
     });
+
+  } catch (err) {
+    console.error("[FCM] failed to update FCM token:", err);
+    return res.status(500).json({
+      success: false,
+      message: "Server error, please try again later",
+      error: err.message 
+    });
+  }
+});
 
   } catch (error) {
     console.error("更新 FCM Token 失败，错误详情:", error); // 打印完整错误
