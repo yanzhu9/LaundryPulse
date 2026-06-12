@@ -59,7 +59,7 @@ app.post('/register', async (req, res) => {
 
     await supabase
       .from('User_Table')
-      .insert([{ email, password }]);
+      .insert([{ email, password, credit_score: 15 }]);
 
     return res.json({
       success: true,
@@ -163,6 +163,27 @@ app.get('/machines', async (req, res) => {
 app.post("/api/queue-book", async (req, res) => {
   try {
     const { user_id, type } = req.body;
+
+    const { data: userData, error: userErr } = await supabase
+      .from("User_Table")
+      .select("credit_score")
+      .eq("user_id", user_id)
+      .single();
+
+    if (userErr || !userData) {
+      return res.json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    // Set a minimum credit score threshold of 15 to join the queue, users with credit score below 15 will be blocked from joining the queue and receive a message prompting them to improve their credit score
+    if (userData.credit_score < 15) {
+      return res.json({
+        success: false,
+        message: "Your credit score is below 15, you cannot join the online queue."
+      });
+    }
 
     const { data: availableMachines } = await supabase
       .from("Machine_Table")
