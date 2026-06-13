@@ -811,7 +811,16 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
         backgroundColor: const Color.fromARGB(255, 147, 187, 243),
         centerTitle: true,
         title: Text('Machine ${widget.machineId}'),
-        leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
+        leading: IconButton(
+        icon: const Icon(Icons.arrow_back),
+        onPressed: () {
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (context) => const MyHomePage()),
+            (route) => false,
+          );
+        },
+      ),  
       ),
       body: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 32),
@@ -1221,10 +1230,9 @@ class _HelpToCollectPageState extends State<HelpToCollectPage> {
             await _submitChoice("yes");
 
             if (mounted) {
-              Navigator.pushAndRemoveUntil(
+              Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => const MyHomePage()),
-                (route) => false,
+                MaterialPageRoute(builder: (context) => RealTimeWaitTimePage(machineId: widget.machineId)),
               );
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(content: Text("${widget.machineId} is now occupied, countdown started.")),
