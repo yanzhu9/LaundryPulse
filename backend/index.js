@@ -818,6 +818,7 @@ app.get('/get-available-locker', async (req, res) => {
       .from('Locker_Table')
       .select('locker_id')
       .eq('locker_status', 'available')
+      .order('locker_id', { ascending: true }) 
       .limit(1);
 
     if (error) throw error;
