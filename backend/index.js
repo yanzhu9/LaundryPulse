@@ -662,20 +662,29 @@ app.post('/update-fcm-token', async (req, res) => {
 
 // GET /api/check-active-assistance?user_id=xxx
 app.get("/api/check-active-assistance", async (req, res) => {
-  const { user_id } = req.query;
-  if (!user_id) return res.json({ success: false, message: "Missing user_id" });
+  const machine_id = req.query.machine_id;
+  if (!machine_id) {
+    return res.json({ success: false, has_active_assist: false });
+  }
 
-  const { data, error } = await supabase
-    .from("Assistance_Record_Table")
-    .select("record_id")
-    .eq("overdue_user_id", user_id)
-    .eq("is_assisted_active", true)
-    .eq("assistance_status", "unreview");
+  try {
+    const { data, error } = await supabase
+      .from("Assistance_Record_Table")
+      .select("record_id")
+      .eq("machine_id", machine_id)      
+      .eq("is_assisted_active", true)
+      .eq("assistance_status", "unreview");
 
-  if (error) return res.json({ success: false, error: error.message });
+    if (error) throw error;
 
-  // If data array is not empty, it means there is at least one active assistance record for this user
-  return res.json({ success: true, has_active_assist: data.length > 0 });
+    return res.json({
+      success: true,
+      has_active_assist: data.length > 0   
+    });
+  } catch (err) {
+    console.error(err);
+    return res.json({ success: false, has_active_assist: false });
+  }
 });
 
 // POST /api/start-assist-timer
@@ -691,6 +700,7 @@ app.post("/api/start-assist-timer", async (req, res) => {
     .insert({
       overdue_user_id,
       helper_user_id,
+      machine_id,
       assistance_status: "unreview",
       is_assisted_active: true
     })
