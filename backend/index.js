@@ -751,28 +751,49 @@ app.post("/api/start-assist-timer", async (req, res) => {
   }
 });
 
-// POST /api/submit-collect-choice（
 app.post("/api/submit-collect-choice", async (req, res) => {
   const { record_id, machine_id, choice } = req.body;
+
   if (!record_id || !machine_id || !choice) {
     return res.json({ success: false, message: "Missing parameters" });
   }
 
   try {
+    // 1. 结束本次协助记录
     await supabase
       .from("Assistance_Record_Table")
       .update({ is_assisted_active: false })
       .eq("record_id", record_id);
 
     const newStatus = choice === "yes" ? "occupied" : "available";
-    await supabase
-      .from("Machine_Table")
-      .update({ machine_status: newStatus })
-      .eq("machine_id", machine_id);
+
+    if (choice === "yes") {
+      // ✅ 开启 15 分钟预约窗口：用 reserved_end_at 存预约截止时间
+      const reservedEndAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+
+      await supabase
+        .from("Machine_Table")
+        .update({
+          machine_status: newStatus,
+          reserved_end_at: reservedEndAt, // 15 分钟预约窗口（和你原有预约逻辑对齐）
+          finished_at: null               // 洗衣结束时间先清空，等用户点 start 再生成
+        })
+        .eq("machine_id", machine_id);
+    } else {
+      // No：恢复可用，清空预约、结束时间
+      await supabase
+        .from("Machine_Table")
+        .update({
+          machine_status: newStatus,
+          reserved_end_at: null,
+          finished_at: null
+        })
+        .eq("machine_id", machine_id);
+    }
 
     return res.json({ success: true, new_status: newStatus });
   } catch (err) {
-    console.error(err);
+    console.error("submit‑collect‑choice error:", err);
     return res.json({ success: false, message: "Database error" });
   }
 });
