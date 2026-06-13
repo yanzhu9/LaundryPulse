@@ -660,7 +660,7 @@ app.post('/update-fcm-token', async (req, res) => {
   }
 });
 
-// GET /api/check-active-assistance?user_id=xxx
+// GET /api/check-active-assistance?machine_id=xxx
 app.get("/api/check-active-assistance", async (req, res) => {
   const machine_id = req.query.machine_id;
   if (!machine_id) {
@@ -694,61 +694,87 @@ app.post("/api/start-assist-timer", async (req, res) => {
     return res.json({ success: false, message: "Missing parameters" });
   }
 
-  // create a new assistance record with status "unreview" and is_assisted_active = true
-  const { data: assistRecord, error: insertErr } = await supabase
-    .from("Assistance_Record_Table")
-    .insert({
-      overdue_user_id,
-      helper_user_id,
-      machine_id,
-      assistance_status: "unreview",
-      is_assisted_active: true
-    })
-    .select("record_id");
-
-    console.log("Inserted assistance record:");
-    console.log(insertErr);
-
-  if (insertErr) return res.json({ success: false, error: insertErr.message });
-  const recordId = assistRecord.record_id;
-
-  // backend timer: after 15 minutes, if the assistance record is still active → set machine status to overdue and mark assistance record as inactive
-  setTimeout(async () => {
-    // if overtime but assistance record is still active, it means helper didn't finish assist in time → mark machine as overdue
-    await supabase
-      .from("Machine_Table")
-      .update({ machine_status: "overdue" })
-      .eq("machine_id", machine_id);
-
-    // mark assistance record as inactive
-    await supabase
+  try {
+    const checkRes = await supabase
       .from("Assistance_Record_Table")
-      .update({ is_assisted_active: false })
-      .eq("record_id", recordId);
-  }, 900000);
+      .select("record_id")
+      .eq("machine_id", machine_id)
+      .eq("is_assisted_active", true)
+      .eq("assistance_status", "unreview");
 
-  return res.json({ success: true, record_id: recordId });
+    if (checkRes.data.length > 0) {
+      return res.json({ success: false, message: "This machine is already being assisted" });
+    }
+
+    const { data: assistRecords, error: insertErr } = await supabase
+      .from("Assistance_Record_Table")
+      .insert({
+        overdue_user_id,
+        helper_user_id,
+        machine_id,
+        assistance_status: "unreview",
+        is_assisted_active: true
+      })
+      .select("record_id");
+
+    if (insertErr) return res.json({ success: false, error: insertErr.message });
+    const recordId = assistRecords[0].record_id;
+
+    setTimeout(async () => {
+      try {
+        const { data } = await supabase
+          .from("Assistance_Record_Table")
+          .select("is_assisted_active")
+          .eq("record_id", recordId)
+          .single();
+
+        if (data?.is_assisted_active) {
+          await supabase
+            .from("Machine_Table")
+            .update({ machine_status: "overdue" })
+            .eq("machine_id", machine_id);
+
+          await supabase
+            .from("Assistance_Record_Table")
+            .update({ is_assisted_active: false })
+            .eq("record_id", recordId);
+        }
+      } catch (e) {
+        console.error("Timeout error", e);
+      }
+    }, 900000);
+
+    return res.json({ success: true, record_id: recordId });
+  } catch (err) {
+    console.error(err);
+    return res.json({ success: false, error: err.message });
+  }
 });
 
-// POST /api/submit-collect-choice
+// POST /api/submit-collect-choice（
 app.post("/api/submit-collect-choice", async (req, res) => {
   const { record_id, machine_id, choice } = req.body;
   if (!record_id || !machine_id || !choice) {
     return res.json({ success: false, message: "Missing parameters" });
   }
 
-  await supabase
-    .from("Assistance_Record_Table")
-    .update({ is_assisted_active: false })
-    .eq("record_id", record_id);
+  try {
+    await supabase
+      .from("Assistance_Record_Table")
+      .update({ is_assisted_active: false })
+      .eq("record_id", record_id);
 
-  const newStatus = choice === "yes" ? "occupied" : "available";
-  await supabase
-    .from("Machine_Table")
-    .update({ machine_status: newStatus })
-    .eq("machine_id", machine_id);
+    const newStatus = choice === "yes" ? "occupied" : "available";
+    await supabase
+      .from("Machine_Table")
+      .update({ machine_status: newStatus })
+      .eq("machine_id", machine_id);
 
-  return res.json({ success: true, new_status: newStatus });
+    return res.json({ success: true, new_status: newStatus });
+  } catch (err) {
+    console.error(err);
+    return res.json({ success: false, message: "Database error" });
+  }
 });
 
 // POST /api/submit-assistance-review
@@ -864,26 +890,6 @@ app.get('/test-db', async (req, res) => {
       message: '❌ Database connection failed',
       error: e.message
     });
-  }
-});
-
-// GET /api/user/:user_id — get user profile (email + credit_score)
-app.get('/api/user/:user_id', async (req, res) => {
-  try {
-    const { user_id } = req.params;
-    const { data: user, error } = await supabase
-      .from('User_Table')
-      .select('email, credit_score')
-      .eq('user_id', user_id)
-      .single();
-
-    if (error || !user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    res.json({ success: true, email: user.email, credit_score: user.credit_score });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
   }
 });
 
