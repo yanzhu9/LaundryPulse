@@ -6,11 +6,12 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
 import 'pages/globals.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 enum MachineStatus {
   available,
   occupied,
-  gracePeriod,
+  //gracePeriod,
   overdue,
   outOfService,
 }
@@ -25,7 +26,9 @@ class LaundryMachine {
   });
 }
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp();
   runApp(const MyApp());
 }
 
@@ -222,9 +225,9 @@ void dispose() {
           case "occupied":
             st = MachineStatus.occupied;
             break;
-          case "grace-period":
-            st = MachineStatus.gracePeriod;
-            break;
+          //case "grace-period":
+           // st = MachineStatus.gracePeriod;
+            //break;
           case "overdue":
             st = MachineStatus.overdue;
             break;
@@ -246,8 +249,8 @@ void dispose() {
         return Colors.green.shade100;
       case MachineStatus.occupied:
         return Colors.blue.shade100;
-      case MachineStatus.gracePeriod:
-        return Colors.orange.shade100;
+      //case MachineStatus.gracePeriod:
+        //return Colors.orange.shade100;
       case MachineStatus.overdue:
         return Colors.red.shade100;
       case MachineStatus.outOfService:
@@ -255,9 +258,8 @@ void dispose() {
     }
   }
 
-   void _onMachineTap(LaundryMachine machine) {
-    if (machine.status == MachineStatus.occupied ||
-        machine.status == MachineStatus.gracePeriod) {
+   void _onMachineTap(LaundryMachine machine) async{
+    if (machine.status == MachineStatus.occupied ) {
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -265,6 +267,15 @@ void dispose() {
         ),
       );
     } else if (machine.status == MachineStatus.overdue) {
+      final response = await http.get(Uri.parse('https://laundrypulse.onrender.com/api/check-active-assistance?machine_id=${machine.id}'));
+      final data = json.decode(response.body);
+      if (data['has_active_assist']) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("This machine is already being assisted")),
+        );
+        return;
+      }
+      // if not being assisted, navigate to the overdue handling page to prompt user action
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -276,7 +287,6 @@ void dispose() {
 
   Widget _buildMachineCard(LaundryMachine machine) {
     final isClickable = machine.status == MachineStatus.occupied ||
-        machine.status == MachineStatus.gracePeriod ||
         machine.status == MachineStatus.overdue;
 
     return GestureDetector(
@@ -328,13 +338,13 @@ void dispose() {
                   Text("Occupied"),
                 ],
               ),
-              Row(
-                children: [
-                  Container(width:8, height:8, color: Colors.orange.shade100),
-                  SizedBox(width: 4,),
-                  Text("Grace Period"),
-                ],
-              ),
+              //Row(
+                //children: [
+                  //Container(width:8, height:8, color: Colors.orange.shade100),
+                  //SizedBox(width: 4,),
+                  //Text("Grace Period"),
+                //],
+              //),
               Row(
                 children: [
                   Container(width:8, height:8, color: Colors.red.shade100),
@@ -927,18 +937,364 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
   }
 }
 
-class OverdueHandlingPage extends StatelessWidget {
+class OverdueHandlingPage extends StatefulWidget {
+  // Use camelCase for Dart naming convention to avoid linter warnings
   final String machineId;
-
   const OverdueHandlingPage({super.key, required this.machineId});
+
+  @override
+  State<OverdueHandlingPage> createState() => _OverdueHandlingPageState();
+}
+
+class _OverdueHandlingPageState extends State<OverdueHandlingPage> {
+  final String baseUrl = "https://laundrypulse.onrender.com";
+
+  /// Navigate back to home page and remove all previous routes
+  void _onNoPressed() {
+    if (mounted) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const MyHomePage()),
+        (route) => false,
+      );
+    }
+  }
+
+  /// Start the assistance process: check locker, get user info, create assist record
+  Future<void> _onYesPressed() async {
+    // Convert camelCase to snake_case for database/API field name
+    final String machineIdForApi = widget.machineId;
+    final String helperUserId = current_user_id ?? ""; // Use current_user_id directly, default to empty string if null
+
+    if (helperUserId.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("User not logged in")),
+        );
+      }
+      return;
+    }
+
+    try {
+      // Step 1: Check available locker
+      final lockerResponse = await http.get(Uri.parse("$baseUrl/get-available-locker"));
+      final lockerData = json.decode(lockerResponse.body);
+
+      // No available locker, return to home
+      if (!lockerData['success']) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Locker is full, thank you for your kindness")),
+          );
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (context) => const MyHomePage()),
+            (route) => false,
+          );
+        }
+        return;
+      }
+      final int lockerId = lockerData['locker_id'];
+
+      // Step 2: Get overdue user id from machine info
+      final machineResponse = await http.get(Uri.parse("$baseUrl/getMachineInfo?mid=$machineIdForApi"));
+      final machineData = json.decode(machineResponse.body);
+      final String overdueUserId = machineData["current_user_id"];
+
+      // Step 3: Send request to start assistance timer
+      final assistResponse = await http.post(
+        Uri.parse("$baseUrl/api/start-assist-timer"),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          "overdue_user_id": overdueUserId,
+          "helper_user_id": helperUserId,
+          "machine_id": machineIdForApi
+        })
+      );
+        
+      final assistData = json.decode(assistResponse.body);
+      if (assistData['success'] && mounted) {
+        final String recordId = assistData['record_id'];
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => HelpToCollectPage(
+              machineId: machineIdForApi,
+              recordId: recordId,
+              lockerId: lockerId,
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint("Error in assistance flow: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Network error, please try again")),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: const Color.fromARGB(255, 147, 187, 243),
         centerTitle: true,
-        title: Text('Overdue Handling for $machineId'),
+        title: Text('Overdue Handling for ${widget.machineId}'),
+      ),
+      body: Stack(
+        children: [
+          const SizedBox.expand(),
+          SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 60),
+            child: Container(
+              width: double.infinity,
+              constraints: const BoxConstraints(maxWidth: 480),
+              margin: const EdgeInsets.only(top: 40),
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black12,
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    "You can help users who haven't picked up their laundry by placing it in the correct locker.",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    "After placing the clothes in the assigned locker, you can continue using the machine.",
+                    style: TextStyle(fontSize: 14, color: Colors.grey),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      "Operation Instructions:",
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    "1. The system will show you the machine number to collect laundry from.\n"
+                    "2. Please put the clothes into the specific locker.",
+                    style: TextStyle(fontSize: 13, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 16),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      "Credit Score Rules:",
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  const Row(
+                    children: [
+                      Icon(Icons.check, color: Colors.green, size: 16),
+                      SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          "If confirmed correct, +5 points",
+                          style: TextStyle(fontSize: 13, color: Colors.grey),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  const Row(
+                    children: [
+                      Icon(Icons.close, color: Colors.red, size: 16),
+                      SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          "If reported wrong or missing, -5 points",
+                          style: TextStyle(fontSize: 13, color: Colors.grey),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: _onYesPressed,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          child: const Text("Yes"),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: _onNoPressed,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.grey.shade300,
+                            foregroundColor: Colors.black,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          child: const Text("No"),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// Page for helper to confirm collection and reserve machine
+class HelpToCollectPage extends StatefulWidget {
+  // Use camelCase for Dart naming convention
+  final String machineId;
+  final String recordId;
+  final int lockerId;
+
+  const HelpToCollectPage({
+    super.key,
+    required this.machineId,
+    required this.recordId,
+    required this.lockerId,
+  });
+
+  @override
+  State<HelpToCollectPage> createState() => _HelpToCollectPageState();
+}
+
+class _HelpToCollectPageState extends State<HelpToCollectPage> {
+  final String baseUrl = "https://laundrypulse.onrender.com";
+
+  /// Submit helper's final choice to backend
+  Future<void> _submitChoice(String choice) async {
+    final String helperUserId = current_user_id ?? "";
+    try {
+      await http.post(
+        Uri.parse("$baseUrl/api/submit-collect-choice"),
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({
+          "record_id": widget.recordId,
+          "machine_id": widget.machineId,
+          "choice": choice,
+          "helper_user_id": helperUserId
+        })
+      );
+    } catch (e) {
+      debugPrint("Submit choice error: $e");
+    }
+  }
+
+  /// Show confirmation dialog before submitting choice
+  void _onHelpCollect() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Would you continue to use this machine?"),
+        content: Text("Choosing Yes will reserve this machine. Please put clothes from ${widget.machineId} into Locker ${widget.lockerId}"),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await _submitChoice("yes");
+              if (mounted) {
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (context) => const HomePage()),
+                  (route) => false,
+                );
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text("${widget.machineId} is now occupied, countdown started.")),
+                );
+              }
+            },
+            child: const Text("Yes"),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              await _submitChoice("no");
+              if (mounted) {
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (context) => const HomePage()),
+                  (route) => false,
+                );
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Machine will be set to available")),
+                );
+              }
+            },
+            child: const Text("No"),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF7F9FC),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF5A7D9A),
+        centerTitle: true,
+        title: const Text("Help to Collect", style: TextStyle(color: Colors.white)),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 120),
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text(
+                "Put clothes from ${widget.machineId}\ninto Locker ${widget.lockerId}",
+                style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w600, color: Color(0xFF2C3E50)),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 50),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _onHelpCollect,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF4A90E2),
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text(
+                    "Help To Collect",
+                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w500, color: Colors.white),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
