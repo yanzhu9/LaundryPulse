@@ -1208,50 +1208,57 @@ class _HelpToCollectPageState extends State<HelpToCollectPage> {
 
   /// Show confirmation dialog before submitting choice
   void _onHelpCollect() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Would you continue to use this machine?"),
-        content: Text("Choosing Yes will reserve this machine. Please put clothes from ${widget.machineId} into Locker ${widget.lockerId}"),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              await _submitChoice("yes");
-              if (mounted) {
-                Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(builder: (context) => const HomePage()),
-                  (route) => false,
-                );
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("${widget.machineId} is now occupied, countdown started.")),
-                );
-              }
-            },
-            child: const Text("Yes"),
-          ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              await _submitChoice("no");
-              if (mounted) {
-                Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(builder: (context) => const HomePage()),
-                  (route) => false,
-                );
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Machine will be set to available")),
-                );
-              }
-            },
-            child: const Text("No"),
-          ),
-        ],
-      ),
-    );
-  }
+  showDialog(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text("Would you continue to use this machine?"),
+      content: Text("Choosing Yes will reserve this machine. Please put clothes from ${widget.machineId}"),
+      actions: [
+        TextButton(
+          onPressed: () async {
+            Navigator.pop(dialogContext);
+
+            await _submitChoice("yes");
+
+            if (mounted) {
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (context) => const MyHomePage()),
+                (route) => false,
+              );
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text("${widget.machineId} is now occupied, countdown started.")),
+              );
+            }
+          },
+          child: const Text("Yes"),
+        ),
+        TextButton(
+          onPressed: () async {
+            // 1. first close the dialog using its own context to ensure the dialog is dismissed before any state changes or navigation occurs, preventing potential issues with trying to update state or navigate while the dialog is still open
+            Navigator.pop(dialogContext);
+
+            // 2. then submit the choice to the backend to update the assistance record and machine status accordingly; this asynchronous operation will ensure that the helper's decision is recorded and the machine is set back to available for others to use
+            await _submitChoice("no");
+
+            // 3. finally, check if the page is still mounted before attempting to navigate back to the home page and show a snackbar; this is crucial to prevent trying to update state or navigate on a widget that has already been disposed, which could lead to errors; if the widget is still mounted, it will navigate back to the home page and show a confirmation message that the machine will be set to available again
+            if (mounted) {
+              Navigator.pushAndRemoveUntil(
+                context,
+                MaterialPageRoute(builder: (context) => const MyHomePage()),
+                (route) => false,
+              );
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Machine will be set to available")),
+              );
+            }
+          },
+          child: const Text("No"),
+        ),
+      ],
+    ),
+  );
+}
 
   @override
   Widget build(BuildContext context) {
