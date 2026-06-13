@@ -704,8 +704,10 @@ app.post("/api/start-assist-timer", async (req, res) => {
       assistance_status: "unreview",
       is_assisted_active: true
     })
-    .select("record_id")
-    .single();
+    .select("record_id");
+
+    console.log("Inserted assistance record:");
+    console.log(insertErr);
 
   if (insertErr) return res.json({ success: false, error: insertErr.message });
   const recordId = assistRecord.record_id;
