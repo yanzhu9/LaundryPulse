@@ -800,7 +800,7 @@ app.get("/api/get-pending-review-list", async (req, res) => {
 });
 
 // GET /api/get-available-locker
-router.get('/get-available-locker', async (req, res) => {
+app.get('/get-available-locker', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('locker')
