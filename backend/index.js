@@ -867,6 +867,26 @@ app.get('/test-db', async (req, res) => {
   }
 });
 
+// GET /api/user/:user_id — get user profile (email + credit_score)
+app.get('/api/user/:user_id', async (req, res) => {
+  try {
+    const { user_id } = req.params;
+    const { data: user, error } = await supabase
+      .from('User_Table')
+      .select('email, credit_score')
+      .eq('user_id', user_id)
+      .single();
+
+    if (error || !user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    res.json({ success: true, email: user.email, credit_score: user.credit_score });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
