@@ -124,7 +124,7 @@ app.post('/login', async (req, res) => {
       });
     }
     const user = users[0];
-    
+
     // '!==' is used for strict comparison to avoid type coercion issues
     if (user.password !== password) {
       return res.json({
@@ -140,7 +140,6 @@ app.post('/login', async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Login error details:", err);
     return res.json({
       success: false,
       msg: "Login failed. Please try again later."
@@ -213,7 +212,8 @@ app.post("/api/queue-book", async (req, res) => {
           machine_status: "occupied",
           reserved_end_at: reservedEnd,
           finished_at: null, // Set finished_at to null, will be updated when washing is finished
-          pickup_end_at: null
+          pickup_end_at: null,
+          current_user_id: user_id // Store the current user ID for this machine, can be used for sending targeted notifications later
         })
         .eq("machine_id", targetMachine.machine_id);
 
@@ -300,7 +300,8 @@ app.post("/api/release-machine", async (req, res) => {
       .from("Machine_Table")
       .update({
         machine_status: "available",
-        finished_at: null
+        finished_at: null,
+        current_user_id: null
       })
       .eq("machine_id", machine_id);
 
@@ -472,7 +473,8 @@ app.post("/api/machines/:id/pickup", async (req, res) => {
       .update({
         machine_status: "available",
         pickup_end_at: null,
-        finished_at: null
+        finished_at: null,
+        current_user_id: null
       })
       .eq("machine_id", machine_id);
 
@@ -532,7 +534,8 @@ setInterval(async () => {
       .from('Machine_Table')
       .update({
         machine_status: 'available',
-        reserved_end_at: null
+        reserved_end_at: null,
+        current_user_id: null
       })
       .eq('machine_id', machine.machine_id);
 
@@ -655,6 +658,8 @@ app.post('/update-fcm-token', async (req, res) => {
     });
   }
 });
+
+
 
 // test endpoint to verify backend and database connection
 app.get('/', (req, res) => {
