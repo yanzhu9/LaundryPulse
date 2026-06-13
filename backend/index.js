@@ -815,7 +815,7 @@ app.get("/api/get-pending-review-list", async (req, res) => {
 app.get('/get-available-locker', async (req, res) => {
   try {
     const { data, error } = await supabase
-      .from('locker')
+      .from('Locker_Table')
       .select('locker_id')
       .eq('locker_status', 'available')
       .limit(1);
@@ -825,7 +825,7 @@ app.get('/get-available-locker', async (req, res) => {
     if (data && data.length > 0) {
       const lockerId = data[0].locker_id;
       await supabase
-        .from('locker')
+        .from('Locker_Table')
         .update({ locker_status: 'occupied' })
         .eq('locker_id', lockerId);
 
