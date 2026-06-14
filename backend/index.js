@@ -873,14 +873,23 @@ app.post("/api/submit-collect-choice", async (req, res) => {
     const newStatus = choice === "yes" ? "occupied" : "available";
 
     if (choice === "yes") {
+      // 从 Assistance_Record_Table 取出 helper_user_id
+      // 后续洗涤完成/超时等 FCM 通知需要通过 current_user_id 找到 helper
+      const { data: record } = await supabase
+        .from("Assistance_Record_Table")
+        .select("helper_user_id")
+        .eq("record_id", record_id)
+        .single();
+
       const reservedEndAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
       await supabase
         .from("Machine_Table")
         .update({
           machine_status: newStatus,
-          reserved_end_at: reservedEndAt, 
-          finished_at: null              
+          reserved_end_at: reservedEndAt,
+          finished_at: null,
+          current_user_id: record?.helper_user_id  // 机器使用者更新为 helper，后续 FCM 通知发给他
         })
         .eq("machine_id", machine_id);
     } else {
