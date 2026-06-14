@@ -815,16 +815,12 @@ app.post("/api/start-assist-timer", async (req, res) => {
     if (insertErr) return res.json({ success: false, error: insertErr.message });
     const recordId = assistRecords[0].record_id;
 
-    // 通知 overdue 用户：有邻居正在帮你移走衣物
-    // 用户收到通知后打开 app，首页弹出评价弹窗（前端轮询 get-pending-review-list 触发）
     await sendNotification(
       overdue_user_id,
       'Someone is Helping You 🤝',
       `A neighbor is helping collect your laundry from Machine ${machine_id}. Please rate them in the app.`
     );
 
-    // 15 分钟超时兜底：若 helper 一直未提交操作结果，机器打回 overdue
-    // ⚠️ 此 timer 存于内存，服务器重启后会丢失
     setTimeout(async () => {
       try {
         const { data } = await supabase
