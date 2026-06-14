@@ -4,22 +4,18 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const cors = require('cors');
 
-// ─── Firebase Admin SDK ───────────────────────────────────────────────────────
-// 用于后端直接向指定设备发送 FCM 推送通知
-// serviceAccountKey.json：从 Firebase Console → 项目设置 → 服务账号 → 生成新的私钥 下载
-// ⚠️ 该文件包含敏感密钥，必须加入 .gitignore，不能提交到 git
-// 容错模式：没有 serviceAccountKey.json 时服务器正常启动，推送功能静默跳过，不影响其他接口
+
 const admin = require('firebase-admin');
 let adminInitialized = false;
 try {
-  const serviceAccount = require('./serviceAccountKey.json');
+  const serviceAccount = require('/etc/secrets/serviceAccountKey.json');
   admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
   adminInitialized = true;
   console.log('[FCM] Firebase Admin initialized successfully');
 } catch (e) {
   console.warn('[FCM] serviceAccountKey.json not found, push notifications disabled');
 }
-// ─────────────────────────────────────────────────────────────────────────────
+
 
 const app = express();
 app.use(cors());
@@ -29,12 +25,10 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-// ─── FCM 推送工具函数 ──────────────────────────────────────────────────────────
 // 根据 user_id 查出该用户的 fcm_token，再通过 Firebase Admin SDK 发送推送
 // fcm_token 是用户登录时由 Flutter 端获取并上传到 User_Table 的设备标识符
-// 若用户未注册 token（未授权通知 / 未登录），则静默跳过，不影响主流程
 async function sendNotification(userId, title, body) {
-  // Firebase 未初始化（本地没有 serviceAccountKey.json）时静默跳过，不影响主流程
+  // Firebase 未初始化（本地没有 serviceAccountKey.json）时跳过，不影响主流程
   if (!adminInitialized) return;
   try {
     const { data: user, error } = await supabase
@@ -59,7 +53,7 @@ async function sendNotification(userId, title, body) {
     console.error(`[FCM] Failed for user ${userId}:`, err.message);
   }
 }
-// ─────────────────────────────────────────────────────────────────────────────
+
 
 app.post('/register', async (req, res) => {
   const { email: rawEmail, password } = req.body;
@@ -654,7 +648,7 @@ setInterval(async () => {
       })
       .eq("machine_id", m.machine_id);
 
-    // 洗涤结束，通知用户在 15 分钟内来取衣物
+    // 洗涤结束，通知用户在 15 分钟内来取衣服
     await sendNotification(
       m.current_user_id,
       'Laundry Done! 🧺',
@@ -688,7 +682,7 @@ setInterval(async () => {
       })
       .eq("machine_id", m.machine_id);
 
-    // 取件窗口超时，机器进入 overdue，提醒用户立即取件，否则他人可协助移走
+    // 取件窗口超时，机器进入 overdue，提醒用户立即取件
     await sendNotification(
       m.current_user_id,
       'Pick-up Time Expired ⚠️',
@@ -860,7 +854,7 @@ app.post("/api/submit-collect-choice", async (req, res) => {
   }
 
   try {
-    // 1. 结束本次协助记录
+    // 1. 结束本次assistance_record
     await supabase
       .from("Assistance_Record_Table")
       .update({ is_assisted_active: false })
@@ -929,8 +923,6 @@ app.post("/api/submit-assistance-review", async (req, res) => {
   const scoreDelta = review_result ? 5 : -5;
 
   // 2. Update helper's credit score
-  // 原代码用 supabase.raw() 但 Supabase JS SDK v2 不支持该方法，会导致分数实际不变
-  // 修复：先查出当前分数，加减后再写回
   const { data: helperData, error: helperFetchErr } = await supabase
     .from("User_Table")
     .select("credit_score")
