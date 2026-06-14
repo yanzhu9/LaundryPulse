@@ -29,6 +29,38 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// ─── FCM 推送工具函数 ──────────────────────────────────────────────────────────
+// 根据 user_id 查出该用户的 fcm_token，再通过 Firebase Admin SDK 发送推送
+// fcm_token 是用户登录时由 Flutter 端获取并上传到 User_Table 的设备标识符
+// 若用户未注册 token（未授权通知 / 未登录），则静默跳过，不影响主流程
+async function sendNotification(userId, title, body) {
+  // Firebase 未初始化（本地没有 serviceAccountKey.json）时静默跳过，不影响主流程
+  if (!adminInitialized) return;
+  try {
+    const { data: user, error } = await supabase
+      .from('User_Table')
+      .select('fcm_token')
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !user?.fcm_token) {
+      console.log(`[FCM] No token for user ${userId}, skipping`);
+      return;
+    }
+
+    await admin.messaging().send({
+      token: user.fcm_token,
+      notification: { title, body }
+    });
+
+    console.log(`[FCM] Sent to user ${userId}: "${title}"`);
+  } catch (err) {
+    // 推送失败（token 过期、设备离线等）不应影响主业务，只记日志
+    console.error(`[FCM] Failed for user ${userId}:`, err.message);
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 app.post('/register', async (req, res) => {
   const { email: rawEmail, password } = req.body;
   const email = rawEmail?.toLowerCase().trim();
