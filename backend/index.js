@@ -4,6 +4,23 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const cors = require('cors');
 
+// ─── Firebase Admin SDK ───────────────────────────────────────────────────────
+// 用于后端直接向指定设备发送 FCM 推送通知
+// serviceAccountKey.json：从 Firebase Console → 项目设置 → 服务账号 → 生成新的私钥 下载
+// ⚠️ 该文件包含敏感密钥，必须加入 .gitignore，不能提交到 git
+// 容错模式：没有 serviceAccountKey.json 时服务器正常启动，推送功能静默跳过，不影响其他接口
+const admin = require('firebase-admin');
+let adminInitialized = false;
+try {
+  const serviceAccount = require('./serviceAccountKey.json');
+  admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+  adminInitialized = true;
+  console.log('[FCM] Firebase Admin initialized successfully');
+} catch (e) {
+  console.warn('[FCM] serviceAccountKey.json not found, push notifications disabled');
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 const app = express();
 app.use(cors());
 app.use(express.json());
