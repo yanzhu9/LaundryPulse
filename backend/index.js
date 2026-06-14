@@ -632,9 +632,10 @@ setInterval(async () => {
 // Check every 5 seconds: if a machine's finished_at has passed but pickup_end_at is not set → set pickup_end_at = now + 15 minutes and mark as waiting for pickup
 setInterval(async () => {
   const now = new Date();
+  // 补充 current_user_id，用于发送"洗完了请取件"通知
   const { data: washingEndList } = await supabase
     .from("Machine_Table")
-    .select("machine_id, finished_at, pickup_end_at")
+    .select("machine_id, finished_at, pickup_end_at, current_user_id")
     .eq("machine_status", "occupied")
     .not("finished_at", "is", null)
     .is("pickup_end_at", null);
@@ -652,6 +653,13 @@ setInterval(async () => {
         finished_at: null // clear finished_at since washing is done, now it's in pickup waiting state
       })
       .eq("machine_id", m.machine_id);
+
+    // 洗涤结束，通知用户在 15 分钟内来取衣物
+    await sendNotification(
+      m.current_user_id,
+      'Laundry Done! 🧺',
+      `Your laundry in Machine ${m.machine_id} is done. Please collect it within 15 minutes.`
+    );
 
     console.log(`Machine ${m.machine_id} wash finished, 15-min pickup window started`);
   }
