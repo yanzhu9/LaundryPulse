@@ -584,28 +584,51 @@ class ProfilePage extends StatefulWidget {
   State<ProfilePage> createState() => _ProfilePageState();
 }
 
+class ProfilePage extends StatefulWidget {
+  const ProfilePage({super.key});
+
+  @override
+  State<ProfilePage> createState() => _ProfilePageState();
+}
+
 class _ProfilePageState extends State<ProfilePage> {
   String? email;
   int? creditScore;
   bool isLoading = true;
-  final String baseUrl = "https://laundrypulse-gf1v.onrender.com";
+  int pendingReviewCount = 0;
+  final String baseUrl = "https://laundrypulse.onrender.com";
 
   @override
   void initState() {
     super.initState();
-    fetchProfile();
+    fetchAllData();
   }
 
-  Future<void> fetchProfile() async {
+  // Fetch user profile and pending review count
+  Future<void> fetchAllData() async {
+    if (current_user_id == null || current_user_id!.isEmpty) {
+      if (mounted) setState(() => isLoading = false);
+      return;
+    }
+
     try {
-      final res = await http.get(
+      // Get user profile info
+      final profileRes = await http.get(
         Uri.parse("$baseUrl/api/user/${current_user_id}"),
       );
-      final map = jsonDecode(res.body);
+      final profileMap = jsonDecode(profileRes.body);
+
+      // Get pending review records count
+      final reviewRes = await http.get(
+        Uri.parse("$baseUrl/api/get-pending-review-list?overdue_user_id=${current_user_id}"),
+      );
+      final reviewMap = jsonDecode(reviewRes.body);
+
       if (mounted) {
         setState(() {
-          email = map["email"];
-          creditScore = map["credit_score"];
+          email = profileMap["email"];
+          creditScore = profileMap["credit_score"];
+          pendingReviewCount = reviewMap["success"] ? reviewMap["pending_list"].length : 0;
           isLoading = false;
         });
       }
@@ -620,6 +643,61 @@ class _ProfilePageState extends State<ProfilePage> {
     return Colors.red;
   }
 
+  // New clickable entry for pending reviews, placed at bottom
+  Widget buildReviewEntry() {
+    return InkWell(
+      onTap: () async {
+        if (current_user_id == null) return;
+        final res = await http.get(
+          Uri.parse("$baseUrl/api/get-pending-review-list?overdue_user_id=${current_user_id}"),
+        );
+        final data = jsonDecode(res.body);
+        if (data["success"] && mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => 
+            PendingReviewPage(
+              onReviewSubmitted: () => fetchAllData(),
+            ),
+        ),
+      );
+        }
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 14),
+        margin: const EdgeInsets.only(top: 24),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              "Pending Assistance Records to Review",
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+            ),
+            pendingReviewCount > 0
+                ? Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      "$pendingReviewCount",
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -628,71 +706,219 @@ class _ProfilePageState extends State<ProfilePage> {
           ? const Center(child: CircularProgressIndicator())
           : Padding(
               padding: const EdgeInsets.all(24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  const SizedBox(height: 40),
-                  const CircleAvatar(
-                    radius: 40,
-                    backgroundColor: Color.fromARGB(255, 215, 230, 243),
-                    child: Icon(Icons.person, size: 48, color: Colors.blueGrey),
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    email ?? "Unknown",
-                    style: const TextStyle(fontSize: 16, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 32),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade50,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: Colors.grey.shade200),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // Reduced top height to move content upward
+                    const SizedBox(height: 20),
+                    const CircleAvatar(
+                      radius: 40,
+                      backgroundColor: Color.fromARGB(255, 215, 230, 243),
+                      child: Icon(Icons.person, size: 48, color: Colors.blueGrey),
                     ),
-                    child: Column(
-                      children: [
-                        const Text("Credit Score", style: TextStyle(fontSize: 14, color: Colors.grey)),
-                        const SizedBox(height: 8),
-                        Text(
-                          "${creditScore ?? 0}",
-                          style: TextStyle(
-                            fontSize: 48,
-                            fontWeight: FontWeight.bold,
-                            color: _creditColor(creditScore ?? 0),
+                    const SizedBox(height: 16),
+                    Text(
+                      email ?? "Unknown",
+                      style: const TextStyle(fontSize: 16, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 32),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.grey.shade200),
+                      ),
+                      child: Column(
+                        children: [
+                          const Text("Credit Score", style: TextStyle(fontSize: 14, color: Colors.grey)),
+                          const SizedBox(height: 8),
+                          Text(
+                            "${creditScore ?? 0}",
+                            style: TextStyle(
+                              fontSize: 48,
+                              fontWeight: FontWeight.bold,
+                              color: _creditColor(creditScore ?? 0),
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          (creditScore ?? 0) >= 15
-                              ? "✓ Eligible to join queue"
-                              : "✗ Below threshold — cannot join queue",
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: (creditScore ?? 0) >= 15 ? Colors.green : Colors.red,
+                          const SizedBox(height: 4),
+                          Text(
+                            (creditScore ?? 0) >= 15
+                                ? "✓ Eligible to join queue"
+                                : "✗ Below threshold — cannot join queue",
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: (creditScore ?? 0) >= 15 ? Colors.green : Colors.red,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade50,
-                      borderRadius: BorderRadius.circular(8),
+                    const SizedBox(height: 16),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Text(
+                        "💡 Help others by placing overdue clothes in lockers to earn +5 credits.\n"
+                        "⚠️ Declining to help deducts -5 credits.",
+                        style: TextStyle(fontSize: 13, color: Colors.blueGrey),
+                      ),
                     ),
-                    child: const Text(
-                      "💡 Help others by placing overdue clothes in lockers to earn +5 credits.\n"
-                      "⚠️ Declining to help deducts -5 credits.",
-                      style: TextStyle(fontSize: 13, color: Colors.blueGrey),
-                    ),
-                  ),
-                ],
+                    // New review entry at the bottom of original UI
+                    buildReviewEntry(),
+                  ],
+                ),
               ),
             ),
+    );
+  }
+}
+
+const String baseUrl = "https://laundrypulse.onrender.com";
+
+class PendingReviewPage extends StatefulWidget {
+  final VoidCallback onReviewSubmitted;
+  const PendingReviewPage({
+    super.key,
+    required this.onReviewSubmitted,
+  });
+
+  @override
+  State<PendingReviewPage> createState() => _PendingReviewPageState();
+}
+
+class _PendingReviewPageState extends State<PendingReviewPage> {
+  bool isLoading = true;
+  List<dynamic> pendingList = [];
+
+  @override
+  void initState() {
+    super.initState();
+    fetchPendingReviews();
+  }
+
+  // Fetch unreviewed records (assistance_status = unreview)
+  Future<void> fetchPendingReviews() async {
+    if (current_user_id == null || current_user_id!.isEmpty) {
+      setState(() => isLoading = false);
+      return;
+    }
+    try {
+      final res = await http.get(
+        Uri.parse("$baseUrl/api/get-pending-review-list?overdue_user_id=$current_user_id"),
+      );
+      final data = jsonDecode(res.body);
+      if (data["success"] == true && mounted) {
+        setState(() {
+          pendingList = data["pending_list"];
+          isLoading = false;
+        });
+      } else {
+        setState(() => isLoading = false);
+      }
+    } catch (e) {
+      debugPrint("Fetch pending list error: $e");
+      if (mounted) setState(() => isLoading = false);
+    }
+  }
+
+  // Format UTC time to local readable time
+  String formatTime(String? rawTime) {
+    if (rawTime == null || rawTime.isEmpty) return "Unknown Time";
+    try {
+      final dateTime = DateTime.parse(rawTime).toLocal();
+      return DateFormat("yyyy-MM-dd HH:mm").format(dateTime);
+    } catch (_) {
+      return rawTime;
+    }
+  }
+
+  // Show review dialog (Yes left, No right)
+  void showReviewDialog(String recordId) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Confirm Assistance Review"),
+        content: const Text("Did the helper place items in the correct locker with complete belongings?"),
+        actions: [
+          ElevatedButton(
+            onPressed: () => submitReview(recordId, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+            child: const Text("Yes (+5 Credits)"),
+          ),
+          TextButton(
+            onPressed: () => submitReview(recordId, false),
+            child: const Text("No (-5 Credits)", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> submitReview(String recordId, bool isPositive) async {
+    if (mounted) Navigator.pop(context);
+
+    try {
+      final res = await http.post(
+        Uri.parse("$baseUrl/api/submit-assistance-review"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "record_id": recordId,
+          "overdue_user_id": current_user_id,
+          "review_result": isPositive, 
+        }),
+      );
+      final data = jsonDecode(res.body);
+
+      if (data["success"] == true && mounted) {
+        await fetchPendingReviews();    
+        widget.onReviewSubmitted();     
+      }
+    } catch (e) {
+      debugPrint("Submit review error: $e");
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Pending Reviews")),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : pendingList.isEmpty
+              ? const Center(child: Text("No pending review records"))
+              : ListView.builder(
+                  padding: const EdgeInsets.all(12),
+                  itemCount: pendingList.length,
+                  itemBuilder: (context, index) {
+                    final record = pendingList[index];
+                    final String formattedTime = formatTime(record["created_at"]);
+                    final String machineId = record["machine_id"] ?? "Unknown Machine";
+
+                    return Card(
+                      elevation: 2,
+                      margin: const EdgeInsets.only(bottom: 10),
+                      child: ListTile(
+                        onTap: () => showReviewDialog(record["record_id"]),
+                        title: Text(
+                          formattedTime,
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
+                        ),
+                        subtitle: Text(
+                          "Machine: $machineId",
+                          style: const TextStyle(fontSize: 14, color: Colors.grey),
+                        ),
+                        trailing: const Icon(Icons.rate_review),
+                      ),
+                    );
+                  },
+                ),
     );
   }
 }
