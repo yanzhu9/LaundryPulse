@@ -7,6 +7,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'pages/globals.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 enum MachineStatus {
   available,
