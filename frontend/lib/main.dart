@@ -8,6 +8,7 @@ import 'dart:async';
 import 'pages/globals.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:intl/intl.dart';
 
 enum MachineStatus {
   available,
@@ -575,13 +576,6 @@ class _HeatMapPageState extends State<HeatMapPage> {
       ),
     );
   }
-}
-
-class ProfilePage extends StatefulWidget {
-  const ProfilePage({super.key});
-
-  @override
-  State<ProfilePage> createState() => _ProfilePageState();
 }
 
 class ProfilePage extends StatefulWidget {
