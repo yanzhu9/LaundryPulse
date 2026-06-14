@@ -268,7 +268,7 @@ void dispose() {
 }
 
   Future<void> fetchRealMachineData() async {
-  final res = await http.get(Uri.parse("https://laundrypulse.onrender.com/machines"));
+  final res = await http.get(Uri.parse("https://laundrypulse-gf1v.onrender.com/machines"));
   List<dynamic> rawList = jsonDecode(res.body);
   rawList.sort((a, b) => a["machine_id"].compareTo(b["machine_id"]));
 
@@ -326,7 +326,7 @@ void dispose() {
         ),
       );
     } else if (machine.status == MachineStatus.overdue) {
-      final response = await http.get(Uri.parse('https://laundrypulse.onrender.com/api/check-active-assistance?machine_id=${machine.id}'));
+      final response = await http.get(Uri.parse('https://laundrypulse-gf1v.onrender.com/api/check-active-assistance?machine_id=${machine.id}'));
       final data = json.decode(response.body);
       if (data['has_active_assist']) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -456,7 +456,7 @@ class _QueuePageState extends State<QueuePage> {
 
   Future<void> queueWasher() async {
 
-  String url = "https://laundrypulse.onrender.com/api/queue-book";
+  String url = "https://laundrypulse-gf1v.onrender.com/api/queue-book";
 
   final res = await http.post(
     Uri.parse(url),
@@ -476,7 +476,7 @@ class _QueuePageState extends State<QueuePage> {
 
 Future<void> queueDryer() async {
 
-  String url = "https://laundrypulse.onrender.com/api/queue-book";
+  String url = "https://laundrypulse-gf1v.onrender.com/api/queue-book";
 
   final res = await http.post(
     Uri.parse(url),
@@ -588,7 +588,7 @@ class _ProfilePageState extends State<ProfilePage> {
   String? email;
   int? creditScore;
   bool isLoading = true;
-  final String baseUrl = "https://laundrypulse.onrender.com";
+  final String baseUrl = "https://laundrypulse-gf1v.onrender.com";
 
   @override
   void initState() {
@@ -721,7 +721,7 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
   // frontend local countdown timer (only active during washing)
   Timer? _localCountdownTimer;
 
-  final String baseUrl = "https://laundrypulse.onrender.com";
+  final String baseUrl = "https://laundrypulse-gf1v.onrender.com";
 
   @override
   void initState() {
@@ -1015,7 +1015,7 @@ class OverdueHandlingPage extends StatefulWidget {
 }
 
 class _OverdueHandlingPageState extends State<OverdueHandlingPage> {
-  final String baseUrl = "https://laundrypulse.onrender.com";
+  final String baseUrl = "https://laundrypulse-gf1v.onrender.com";
 
   /// Navigate back to home page and remove all previous routes
   void _onNoPressed() {
@@ -1253,7 +1253,7 @@ class HelpToCollectPage extends StatefulWidget {
 }
 
 class _HelpToCollectPageState extends State<HelpToCollectPage> {
-  final String baseUrl = "https://laundrypulse.onrender.com";
+  final String baseUrl = "https://laundrypulse-gf1v.onrender.com";
 
   /// Submit helper's final choice to backend
   Future<void> _submitChoice(String choice) async {

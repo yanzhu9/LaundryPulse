@@ -14,7 +14,7 @@ class _LoginPageState extends State<LoginPage> {
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
   bool _isLoading = false;
-  final String backendUrl = "https://laundrypulse.onrender.com";
+  final String backendUrl = "https://laundrypulse-gf1v.onrender.com";
 
   @override
   void dispose() {
