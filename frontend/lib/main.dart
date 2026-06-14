@@ -27,19 +27,77 @@ class LaundryMachine {
   });
 }
 
+// 后台 / app 关闭时收到 FCM 消息的处理器
+// 必须是顶层函数并加 @pragma('vm:entry-point')，否则 release 模式会被裁剪
+// Android 后台收到带 notification 字段的消息会自动在通知栏显示横幅，这里只记录日志
+@pragma('vm:entry-point')
+Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  print('[FCM] Background message: ${message.notification?.title}');
+}
+
+// 全局 key：用于在 FCM 回调（无 BuildContext）中显示横幅 / 执行导航
+final GlobalKey<ScaffoldMessengerState> rootScaffoldMessengerKey =
+    GlobalKey<ScaffoldMessengerState>();
+final GlobalKey<NavigatorState> rootNavigatorKey =
+    GlobalKey<NavigatorState>();
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
+  // 注册后台消息处理器（必须在 runApp 之前）
+  FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  @override
+  void initState() {
+    super.initState();
+    _setupFcmListeners();
+  }
+
+  void _setupFcmListeners() {
+    // 1. 前台收到通知：Android 前台不会自动弹通知栏，改用顶部横幅（SnackBar）提示
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      final n = message.notification;
+      if (n != null) {
+        rootScaffoldMessengerKey.currentState?.showSnackBar(
+          SnackBar(
+            content: Text('${n.title ?? ''}\n${n.body ?? ''}'.trim()),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    });
+
+    // 2. app 在后台时，用户点击通知栏横幅打开 app → 跳转处理
+    FirebaseMessaging.onMessageOpenedApp.listen(_handleNotificationTap);
+
+    // 3. app 完全关闭时，用户点击通知启动 app → 取出启动消息处理
+    FirebaseMessaging.instance.getInitialMessage().then((message) {
+      if (message != null) _handleNotificationTap(message);
+    });
+  }
+
+  // 点击通知后的跳转：回到主页，用户可在此看到机器状态 / 评价弹窗
+  void _handleNotificationTap(RemoteMessage message) {
+    rootNavigatorKey.currentState?.pushNamedAndRemoveUntil('/home', (r) => false);
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'LaundryPulse',
+      navigatorKey: rootNavigatorKey,                    // 供 FCM 回调导航
+      scaffoldMessengerKey: rootScaffoldMessengerKey,    // 供 FCM 回调显示横幅
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color.fromARGB(255, 209, 220, 243)),
       ),
