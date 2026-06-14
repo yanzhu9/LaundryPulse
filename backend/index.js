@@ -582,9 +582,13 @@ setInterval(async () => {
         .update({ machine_status: "overdue" })
         .eq("machine_id", m.machine_id);
 
-      // TODO: Send FCM push notification "Please collect your laundry immediately"
-      //await sendNotification(m.user_id, "Laundry Done",
-        //`Your laundry in Machine ${m.machine_id} is done. Please collect it immediately.`);
+      // Grace period 已到期，机器进入 overdue，催促用户立刻取件
+      // select("*") 已包含 current_user_id，可直接使用
+      await sendNotification(
+        m.current_user_id,
+        'Laundry Overdue ⚠️',
+        `Your 15-minute window for Machine ${m.machine_id} has expired. Please collect your laundry immediately.`
+      );
       console.log(`Machine ${m.machine_id} grace period expired → overdue`);
     }
   }
