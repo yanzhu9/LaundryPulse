@@ -590,7 +590,7 @@ class _ProfilePageState extends State<ProfilePage> {
   int? creditScore;
   bool isLoading = true;
   int pendingReviewCount = 0;
-  final String baseUrl = "https://laundrypulse.onrender.com";
+  final String baseUrl = "https://laundrypulse-gf1v.onrender.com";
 
   @override
   void initState() {
@@ -774,7 +774,7 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 }
 
-const String baseUrl = "https://laundrypulse.onrender.com";
+const String baseUrl = "https://laundrypulse-gf1v.onrender.com";
 
 class PendingReviewPage extends StatefulWidget {
   final VoidCallback onReviewSubmitted;
