@@ -504,7 +504,13 @@ app.post('/finishCycle', async (req, res) => {
       })
       .eq('machine_id', machine_id);
 
-    // TODO: Send FCM push notification "Your laundry is done, please collect within 15 minutes"
+    // 洗涤结束，通知机器当前使用者在 15 分钟内取件
+    // machine.current_user_id 在 queue-book / submit-collect-choice 时写入
+    await sendNotification(
+      machine.current_user_id,
+      'Laundry Done! 🧺',
+      `Your laundry in Machine ${machine_id} is done. Please collect it within 15 minutes.`
+    );
 
     return res.json({
       success: true,
