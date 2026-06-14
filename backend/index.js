@@ -365,6 +365,26 @@ app.get('/getMachineInfo', async (req, res) => {
   }
 });
 
+app.get('/api/user/:userId', async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('email, credit_score')
+      .eq('id', userId)
+      .single();
+
+    if (error) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // POST /api/machines/:id/start
 // User presses "Start Washing" → set finished_at = now + wash duration
 app.post('/api/machines/:id/start', async (req, res) => {
