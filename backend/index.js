@@ -868,7 +868,8 @@ app.get("/api/get-pending-review-list", async (req, res) => {
 
   const { data, error } = await supabase
     .from("Assistance_Record_Table")
-    .select("record_id, helper_user_id, assistance_status")
+    // 补上 created_at, machine_id
+    .select("record_id, helper_user_id, assistance_status, created_at, machine_id")
     .eq("overdue_user_id", overdue_user_id)
     .eq("assistance_status", "unreview");
 
