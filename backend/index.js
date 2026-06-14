@@ -668,9 +668,10 @@ setInterval(async () => {
 // if pickup_end_at has passed but user hasn't confirmed pickup → mark as overdue and send notification
 setInterval(async () => {
   const now = new Date();
+  // 补充 current_user_id，用于发送 overdue 通知
   const { data: pickupExpireList } = await supabase
     .from("Machine_Table")
-    .select("machine_id, pickup_end_at")
+    .select("machine_id, pickup_end_at, current_user_id")
     .eq("machine_status", "occupied")
     .not("pickup_end_at", "is", null);
 
@@ -686,6 +687,13 @@ setInterval(async () => {
         pickup_end_at: null
       })
       .eq("machine_id", m.machine_id);
+
+    // 取件窗口超时，机器进入 overdue，提醒用户立即取件，否则他人可协助移走
+    await sendNotification(
+      m.current_user_id,
+      'Pick-up Time Expired ⚠️',
+      `You didn't collect from Machine ${m.machine_id} in time. Others may now assist in moving your laundry.`
+    );
 
     console.log(`Machine ${m.machine_id} pickup expired → overdue`);
   }
