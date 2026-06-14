@@ -933,9 +933,19 @@ app.post("/api/submit-assistance-review", async (req, res) => {
   const scoreDelta = review_result ? 5 : -5;
 
   // 2. Update helper's credit score
+  // 原代码用 supabase.raw() 但 Supabase JS SDK v2 不支持该方法，会导致分数实际不变
+  // 修复：先查出当前分数，加减后再写回
+  const { data: helperData, error: helperFetchErr } = await supabase
+    .from("User_Table")
+    .select("credit_score")
+    .eq("user_id", helperId)
+    .single();
+
+  if (helperFetchErr) return res.json({ success: false, error: helperFetchErr.message });
+
   const { error: scoreErr } = await supabase
     .from("User_Table")
-    .update({ credit_score: supabase.raw(`credit_score + ${scoreDelta}`) })
+    .update({ credit_score: helperData.credit_score + scoreDelta })
     .eq("user_id", helperId);
 
   if (scoreErr) return res.json({ success: false, error: scoreErr.message });
