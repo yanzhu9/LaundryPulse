@@ -370,9 +370,9 @@ app.get('/api/user/:userId', async (req, res) => {
 
   try {
     const { data, error } = await supabase
-      .from('users')
+      .from('User_Table')
       .select('email, credit_score')
-      .eq('id', userId)
+      .eq('user_id', userId)
       .single();
 
     if (error) {
