@@ -207,6 +207,10 @@ app.post("/api/queue-book", async (req, res) => {
     const DRYER_CYCLE = 30;
     const PICKUP_GRACE = 15;
     const cycleBase = type === "washer" ? WASHER_CYCLE : DRYER_CYCLE;
+    // Estimated total time for one machine cycle including pickup grace, used for calculating queue wait time when no machines are currently available
+    const fullMachineDuration = type === "washer" 
+      ? (15 + WASHER_CYCLE + PICKUP_GRACE) 
+      : (15 + DRYER_CYCLE + PICKUP_GRACE);
 
     // 1. Credit score check: if user's credit_score < 15 → reject booking request, no queuing allowed
     const { data: userData, error: userErr } = await supabase
@@ -266,7 +270,7 @@ app.post("/api/queue-book", async (req, res) => {
 
     // 3. No available machine, calculate estimated wait time based on currently occupied machines of the same type, return it in response (not stored in DB)
     const now = new Date();
-    let estimatedWaitMin = 0;
+    let machineBaseWaitMin = 0;
 
     // Only consider occupied machines of the same type, ignore those in grace-period or overdue (since they are technically still occupied but won't block the queue)
     const { data: occupiedMachines } = await supabase
@@ -301,8 +305,19 @@ app.post("/api/queue-book", async (req, res) => {
         const baseWait = Math.max(0, (machineFreeAt - now) / 1000 / 60);
         waitList.push(baseWait);
       }
-      estimatedWaitMin = Math.round(Math.min(...waitList));
+      machineBaseWaitMin = Math.round(Math.min(...waitList));
     }
+
+    // Calculate how many people are currently waiting in the queue for this machine type (booking_status = "waiting", machine_id = null) → each person ahead adds one full cycle duration to the wait time
+    const { count: queuePeopleCount } = await supabase
+      .from("Booking_Table")
+      .select("*", { count: "exact", head: true })
+      .eq("machine_type", type)
+      .eq("booking_status", "waiting")
+      .is("machine_id", null);
+    // Total estimated wait time = base wait time from occupied machines + (number of people ahead in queue * full machine cycle duration)
+    const queueExtraWait = queuePeopleCount * fullMachineDuration;
+    const estimatedWaitMin = Math.round(machineBaseWaitMin + queueExtraWait);
 
     // 4. Insert a new booking record with machine_id = null and booking_status = "waiting", which means the user is in the global waiting queue for that machine type (washer or dryer)
     await supabase.from("Booking_Table").insert([
@@ -316,9 +331,11 @@ app.post("/api/queue-book", async (req, res) => {
 
     return res.json({
       success: true,
-      message: `No available machine, added to global ${type} queue. Estimated wait time: ${estimatedWaitMin} min`,
-      estimated_wait_min: estimatedWaitMin
+      message: `No available machine, added to global ${type} queue. Estimated wait time: ${estimatedWaitMin} min (${queuePeopleCount} people ahead of you)`,
+      estimated_wait_min: estimatedWaitMin,
+      queue_ahead_count: queuePeopleCount 
     });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
