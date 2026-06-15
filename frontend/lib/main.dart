@@ -1073,7 +1073,7 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
         await fetchMachineInfo();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Washing started! Timer is running."), backgroundColor: Colors.green),
+            SnackBar(content: Text("${widget.machineId.startsWith('W') ? 'Washing' : 'Drying'} started! Timer is running."), backgroundColor: Colors.green),
           );
         }
       }
@@ -1122,6 +1122,9 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
 
   @override
   Widget build(BuildContext context) {
+    final bool isWasher = widget.machineId.startsWith('W');
+    final String actionVerb = isWasher ? "Wash" : "Dry";
+    final String actionGerund = isWasher ? "Washing" : "Drying";
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color.fromARGB(255, 147, 187, 243),
@@ -1217,15 +1220,15 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
                 children: [
                   const Icon(Icons.local_laundry_service, size: 100, color: Colors.blue),
                   const SizedBox(height: 24),
-                  const Text(
-                    "Ready to wash?",
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  Text(
+                    "Ready to ${actionVerb.toLowerCase()}?",
+                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
-                  const Text(
-                    "Press Start Washing when you load your clothes.",
+                  Text(
+                    "Press Start $actionGerund when you load your clothes.",
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 15, color: Colors.grey),
+                    style: const TextStyle(fontSize: 15, color: Colors.grey),
                   ),
                   const SizedBox(height: 32),
                   SizedBox(
@@ -1238,7 +1241,7 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
                       ),
                       child: isLoading
                           ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
-                          : const Text("Start Washing", style: TextStyle(fontSize: 18, color: Colors.white)),
+                          : Text("Start $actionGerund", style: const TextStyle(fontSize: 18, color: Colors.white)),
                     ),
                   ),
                 ],
