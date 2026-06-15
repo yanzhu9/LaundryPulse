@@ -316,10 +316,9 @@ app.post("/api/queue-book", async (req, res) => {
 
     return res.json({
       success: true,
-      message: `No available machine, added to global ${type} queue`,
+      message: `No available machine, added to global ${type} queue. Estimated wait time: ${estimatedWaitMin} min`,
       estimated_wait_min: estimatedWaitMin
     });
-
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -619,7 +618,7 @@ setInterval(async () => {
 
     await supabase
       .from('Booking_Table')
-      .update({ booking_status: 'finish' })
+      .update({ booking_status: 'expired' })
       .eq('machine_id', machine.machine_id)
       .eq('booking_status', 'using');
 
