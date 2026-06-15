@@ -1,21 +1,20 @@
 require('dotenv').config();
-
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const cors = require('cors');
-
-
 const admin = require('firebase-admin');
+
 let adminInitialized = false;
 try {
   const serviceAccount = require('/etc/secrets/serviceAccountKey.json');
-  admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+  });
   adminInitialized = true;
   console.log('[FCM] Firebase Admin initialized successfully');
 } catch (e) {
   console.warn('[FCM] serviceAccountKey.json not found, push notifications disabled');
 }
-
 
 const app = express();
 app.use(cors());
@@ -46,14 +45,12 @@ async function sendNotification(userId, title, body) {
       token: user.fcm_token,
       notification: { title, body }
     });
-
     console.log(`[FCM] Sent to user ${userId}: "${title}"`);
   } catch (err) {
     // 推送失败（token 过期、设备离线等）不应影响主业务，只记日志
     console.error(`[FCM] Failed for user ${userId}:`, err.message);
   }
 }
-
 
 app.post('/register', async (req, res) => {
   const { email: rawEmail, password } = req.body;
@@ -166,8 +163,8 @@ app.post('/login', async (req, res) => {
         msg: "Email not found. Please check your email address."
       });
     }
-    const user = users[0];
 
+    const user = users[0];
     // '!==' is used for strict comparison to avoid type coercion issues
     if (user.password !== password) {
       return res.json({
@@ -200,14 +197,22 @@ app.get('/machines', async (req, res) => {
     console.error('Failed to fetch machine data:', error);
     return res.status(500).json({ success: false, msg: 'Failed to fetch machine data' });
   }
-
   res.send(data);
 });
 
 app.post("/api/queue-book", async (req, res) => {
   try {
     const { user_id, type } = req.body;
+    const WASHER_CYCLE = 34;
+    const DRYER_CYCLE = 30;
+    const PICKUP_GRACE = 15;
+    const cycleBase = type === "washer" ? WASHER_CYCLE : DRYER_CYCLE;
+    // Estimated total time for one machine cycle including pickup grace, used for calculating queue wait time when no machines are currently available
+    const fullMachineDuration = type === "washer" 
+      ? (15 + WASHER_CYCLE + PICKUP_GRACE) 
+      : (15 + DRYER_CYCLE + PICKUP_GRACE);
 
+    // 1. Credit score check: if user's credit_score < 15 → reject booking request, no queuing allowed
     const { data: userData, error: userErr } = await supabase
       .from("User_Table")
       .select("credit_score")
@@ -215,13 +220,9 @@ app.post("/api/queue-book", async (req, res) => {
       .single();
 
     if (userErr || !userData) {
-      return res.json({
-        success: false,
-        message: "User not found"
-      });
+      return res.json({ success: false, message: "User not found" });
     }
 
-    // Set a minimum credit score threshold of 15 to join the queue, users with credit score below 15 will be blocked from joining the queue and receive a message prompting them to improve their credit score
     if (userData.credit_score < 15) {
       return res.json({
         success: false,
@@ -229,6 +230,7 @@ app.post("/api/queue-book", async (req, res) => {
       });
     }
 
+    // 2. Try to find an available machine of the requested type. If found, allocate it immediately and set reserved_end_at = now + 15 min
     const { data: availableMachines } = await supabase
       .from("Machine_Table")
       .select("*")
@@ -238,7 +240,6 @@ app.post("/api/queue-book", async (req, res) => {
 
     if (availableMachines.length > 0) {
       const targetMachine = availableMachines[0];
-      // Set reservation end time = now + 15 minutes, stored in reserved_end_at
       const reservedEnd = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
       await supabase.from("Booking_Table").insert([
@@ -254,9 +255,9 @@ app.post("/api/queue-book", async (req, res) => {
         .update({
           machine_status: "occupied",
           reserved_end_at: reservedEnd,
-          finished_at: null, // Set finished_at to null, will be updated when washing is finished
+          finished_at: null,
           pickup_end_at: null,
-          current_user_id: user_id // Store the current user ID for this machine, can be used for sending targeted notifications later
+          current_user_id: user_id
         })
         .eq("machine_id", targetMachine.machine_id);
 
@@ -265,54 +266,74 @@ app.post("/api/queue-book", async (req, res) => {
         message: `Allocated available machine successfully, your machine ID is ${targetMachine.machine_id}. Please come down within 15 minutes.`,
         machine: targetMachine
       });
-    } else {
-      await supabase.from("Booking_Table").insert([
-        {
-          user_id: user_id,
-          booking_status: "waiting"
+    }
+
+    // 3. No available machine, calculate estimated wait time based on currently occupied machines of the same type, return it in response (not stored in DB)
+    const now = new Date();
+    let machineBaseWaitMin = 0;
+
+    // Only consider occupied machines of the same type, ignore those in grace-period or overdue (since they are technically still occupied but won't block the queue)
+    const { data: occupiedMachines } = await supabase
+      .from("Machine_Table")
+      .select("machine_id, reserved_end_at, finished_at, pickup_end_at")
+      .eq("machine_type", type)
+      .eq("machine_status", "occupied");
+
+    if (occupiedMachines.length > 0) {
+      const waitList = [];
+      for (const machine of occupiedMachines) {
+        let machineFreeAt;
+        const { reserved_end_at, finished_at, pickup_end_at } = machine;
+
+        // Condition 1: Just reserved but cycle hasn't started (reserved_end_at in the future, finished_at and pickup_end_at are null) → free time = reserved_end_at + cycle duration + pickup grace
+        if (finished_at === null && pickup_end_at === null) {
+          const reserveEnd = new Date(reserved_end_at);
+          machineFreeAt = new Date(reserveEnd.getTime() + (cycleBase + PICKUP_GRACE) * 60 * 1000);
         }
-      ]);
-      return res.json({
-        success: true,
-        message: "No available machine, added to queue"
-      });
-    }
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+        // Condition 2: Cycle has started (finished_at in the future, pickup_end_at is null) → free time = finished_at + pickup grace
+        else if (finished_at && pickup_end_at === null) {
+          const finishTime = new Date(finished_at);
+          machineFreeAt = new Date(finishTime.getTime() + PICKUP_GRACE * 60 * 1000);
+        }
+        // Condition 3: Cycle finished but still in pickup grace (finished_at is null, pickup_end_at in the future) → free time = pickup_end_at
+        else if (pickup_end_at) {
+          machineFreeAt = new Date(pickup_end_at);
+        } else {
+          machineFreeAt = now;
+        }
 
-//manually trigger when user finishes washing, update finished_at and start 15-minute countdown
-app.post("/api/finish-wash", async (req, res) => {
-  try {
-    const { machine_id } = req.body;
-
-    const { data: machine, error: getError } = await supabase
-      .from("Machine_Table")
-      .select("*")
-      .eq("machine_id", machine_id)
-      .single();
-
-    if (getError || !machine) {
-      return res.status(404).json({ message: "Machine not found" });
+        const baseWait = Math.max(0, (machineFreeAt - now) / 1000 / 60);
+        waitList.push(baseWait);
+      }
+      machineBaseWaitMin = Math.round(Math.min(...waitList));
     }
 
-    //check whether machine is in occupied state 
-    if (machine.machine_status !== "occupied") {
-      return res.status(400).json({ message: "Machine is not in occupied state" });
-    }
+    // Calculate how many people are currently waiting in the queue for this machine type (booking_status = "waiting", machine_id = null) → each person ahead adds one full cycle duration to the wait time
+    const { count: queuePeopleCount } = await supabase
+      .from("Booking_Table")
+      .select("*", { count: "exact", head: true })
+      .eq("machine_type", type)
+      .eq("booking_status", "waiting")
+      .is("machine_id", null);
+    // Total estimated wait time = base wait time from occupied machines + (number of people ahead in queue * full machine cycle duration)
+    const queueExtraWait = queuePeopleCount * fullMachineDuration;
+    const estimatedWaitMin = Math.round(machineBaseWaitMin + queueExtraWait);
 
-    //update finished_at and start 15-minute countdown
-    await supabase
-      .from("Machine_Table")
-      .update({ finished_at: new Date() })
-      .eq("machine_id", machine_id);
+    // 4. Insert a new booking record with machine_id = null and booking_status = "waiting", which means the user is in the global waiting queue for that machine type (washer or dryer)
+    await supabase.from("Booking_Table").insert([
+      {
+        user_id: user_id,
+        machine_id: null,
+        machine_type: type,
+        booking_status: "waiting"
+      }
+    ]);
 
-    res.json({
+    return res.json({
       success: true,
-      message: `Washing finished for machine ${machine_id}. 15-minute countdown started.`,
-      machine_id: machine_id,
-      finished_at: new Date()
+      message: `No available machine, added to global ${type} queue. Estimated wait time: ${estimatedWaitMin} min (${queuePeopleCount} people ahead of you)`,
+      estimated_wait_min: estimatedWaitMin,
+      queue_ahead_count: queuePeopleCount 
     });
 
   } catch (err) {
@@ -320,51 +341,91 @@ app.post("/api/finish-wash", async (req, res) => {
   }
 });
 
-//manually trigger when user releases machine, update machine_status to available and reset finished_at
-app.post("/api/release-machine", async (req, res) => {
+// Helper function to get machine type by machine ID, used in queue allocation to ensure users are allocated to the correct machine type (washer/dryer)
+async function getMachineType(machineId) {
   try {
-    const { machine_id } = req.body;
-
-    const { data: machine, error: getError } = await supabase
+    const { data, error } = await supabase
       .from("Machine_Table")
-      .select("*")
-      .eq("machine_id", machine_id)
+      .select("machine_type")
+      .eq("machine_id", machineId)
       .single();
 
-    if (getError || !machine) {
-      return res.status(404).json({ message: "Machine not found" });
+    if (error || !data) {
+      console.log(`[getMachineType] Machine ${machineId} not found or error`);
+      return null;
+    }
+    return data.machine_type;
+  } catch (err) {
+    console.error("[getMachineType] Error:", err.message);
+    return null;
+  }
+}
+
+// When a machine is released (either by user pick-up or reservation timeout), this function is called to allocate the next waiting user in the queue to this machine. 
+async function allocateWaitingQueueToMachine(machineId) {
+  try {
+    // First get the machine type (washer/dryer) to ensure we allocate from the correct queue
+    const targetType = await getMachineType(machineId);
+    if (!targetType) return;
+
+    // Find the earliest waiting user in the queue for this machine type (booking_status = "waiting", ordered by created_at) → get their booking_id and user_id
+    const { data: waitingUsers, error: queueErr } = await supabase
+      .from("Booking_Table")
+      .select("booking_id, user_id")
+      .eq("machine_type", targetType)
+      .eq("booking_status", "waiting")
+      .order("created_at", { ascending: true })
+      .limit(1);
+
+    // If no waiting user, simply return and keep the machine available for future bookings
+    if (queueErr || waitingUsers.length === 0) {
+      console.log(`[Queue Allocate] No waiting users for ${targetType} queue, skip`);
+      return;
     }
 
-    if (machine.machine_status !== "occupied") {
-      return res.status(400).json({ message: "Machine is not in occupied state" });
-    }
+    const firstWaitUser = waitingUsers[0];
+    const reservedEnd = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
+    // Update the booking record of this user: set machine_id = the released machine, booking_status = "using"
+    await supabase
+      .from("Booking_Table")
+      .update({
+        machine_id: machineId,
+        booking_status: "using"
+      })
+      .eq("booking_id", firstWaitUser.booking_id);
+
+    // Update the machine record: set machine_status = "occupied", reserved_end_at = now + 15 min, current_user_id = this user_id (to track who is currently using the machine for sending notifications later), clear finished_at and pickup_end_at
     await supabase
       .from("Machine_Table")
       .update({
-        machine_status: "available",
+        machine_status: "occupied",
+        reserved_end_at: reservedEnd,
         finished_at: null,
-        current_user_id: null
+        pickup_end_at: null,
+        current_user_id: firstWaitUser.user_id
       })
-      .eq("machine_id", machine_id);
+      .eq("machine_id", machineId);
 
-    res.json({
-      success: true,
-      message: `Machine ${machine_id} released and is now available.`,
-      machine_id: machine_id,
-      new_status: "available"
-    });
+    // Notify the user that it's their turn and which machine they are allocated to, so they can come down within 15 minutes to use it. The notification is sent via FCM using the sendNotification helper function, which looks up the user's fcm_token in the User_Table and sends a push notification through Firebase Admin SDK.
+    await sendNotification(
+      firstWaitUser.user_id,
+      "Your Turn Has Come! 🎉",
+      `Machine ${machineId} is available for you. Please arrive within 15 minutes.`
+    );
 
+    console.log(`[Queue Allocate] Allocated machine ${machineId} to user ${firstWaitUser.user_id}`);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("[Queue Allocate] Error:", err.message);
   }
-});
+}
 
 // GET /getMachineInfo?mid=:id
 // Returns remaining wash seconds and number of people waiting ahead
 app.get('/getMachineInfo', async (req, res) => {
   try {
     const mid = req.query.mid;
+
     const { data: machData } = await supabase
       .from('Machine_Table')
       .select('finished_at, reserved_end_at, pickup_end_at, machine_status, current_user_id')
@@ -403,6 +464,7 @@ app.get('/getMachineInfo', async (req, res) => {
       machine_status: machData?.machine_status ?? 'occupied',
       current_user_id: machData?.current_user_id ?? ''
     });
+
   } catch (err) {
     res.json({ remain_seconds: 0, reserved_remain_seconds: 0, pickup_remain_seconds: 0, ahead_count: 0, machine_status: 'occupied', current_user_id: '' });
   }
@@ -410,7 +472,6 @@ app.get('/getMachineInfo', async (req, res) => {
 
 app.get('/api/user/:userId', async (req, res) => {
   const { userId } = req.params;
-
   try {
     const { data, error } = await supabase
       .from('User_Table')
@@ -421,8 +482,8 @@ app.get('/api/user/:userId', async (req, res) => {
     if (error) {
       return res.status(404).json({ error: 'User not found' });
     }
-
     res.json(data);
+
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -445,6 +506,7 @@ app.post('/api/machines/:id/start', async (req, res) => {
     if (getError || !machine) {
       return res.status(404).json({ success: false, message: 'Machine not found' });
     }
+
     if (machine.machine_status !== 'occupied') {
       return res.status(400).json({ success: false, message: 'Machine is not in occupied state' });
     }
@@ -475,61 +537,18 @@ app.post('/api/machines/:id/start', async (req, res) => {
       machine_id: machine_id,
       finished_at: finishedAt
     });
+
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });
 
-// POST /finishCycle
-// Called by frontend when countdown reaches 0 → trigger finish-wash
-app.post('/finishCycle', async (req, res) => {
-  try {
-    const { mid } = req.body;
-    const machine_id = mid;
-
-    const { data: machine } = await supabase
-      .from('Machine_Table')
-      .select('*')
-      .eq('machine_id', machine_id)
-      .single();
-
-    if (!machine) {
-      return res.status(404).json({ success: false, message: 'Machine not found' });
-    }
-
-    // Set grace_end_time = now + 15 minutes
-    const graceEndTime = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-
-    await supabase
-      .from('Machine_Table')
-      .update({
-        machine_status: 'grace-period',
-        finished_at: graceEndTime
-      })
-      .eq('machine_id', machine_id);
-
-    // 洗涤结束，通知机器当前使用者在 15 分钟内取件
-    // machine.current_user_id 在 queue-book / submit-collect-choice 时写入
-    await sendNotification(
-      machine.current_user_id,
-      'Laundry Done! 🧺',
-      `Your laundry in Machine ${machine_id} is done. Please collect it within 15 minutes.`
-    );
-
-    return res.json({
-      success: true,
-      message: `Machine ${machine_id} cycle finished. 15-minute grace period started.`
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// POST /api/machines/:id/collect
+// POST /api/machines/:id/pickup
 // User confirms clothes collected → set status back to available
 app.post("/api/machines/:id/pickup", async (req, res) => {
   try {
     const machine_id = req.params.id;
+
     const { data: machine, error: getError } = await supabase
       .from("Machine_Table")
       .select("*")
@@ -558,7 +577,10 @@ app.post("/api/machines/:id/pickup", async (req, res) => {
       })
       .eq("machine_id", machine_id);
 
+    await allocateWaitingQueueToMachine(machine_id);
+
     return res.json({ success: true, message: "Pick-up completed, machine released" });
+
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -568,7 +590,6 @@ app.post("/api/machines/:id/pickup", async (req, res) => {
 // If a machine is in grace-period and finished_at has passed → mark as overdue
 setInterval(async () => {
   const now = new Date();
-
   const { data: list } = await supabase
     .from("Machine_Table")
     .select("*")
@@ -579,7 +600,6 @@ setInterval(async () => {
 
   for (let m of list) {
     const graceEnd = new Date(m.finished_at);
-
     if (now >= graceEnd) {
       await supabase
         .from("Machine_Table")
@@ -596,7 +616,6 @@ setInterval(async () => {
       console.log(`Machine ${m.machine_id} grace period expired → overdue`);
     }
   }
-
 }, 5000);
 
 // Check every 5 seconds: if a reserved machine is not claimed within 15 min → release it
@@ -610,6 +629,7 @@ setInterval(async () => {
     .not('reserved_end_at', 'is', null);
 
   if (!expiredReservations) return;
+
   for (const machine of expiredReservations) {
     const reservedEnd = new Date(machine.reserved_end_at);
     if (now < reservedEnd) continue;
@@ -625,11 +645,13 @@ setInterval(async () => {
 
     await supabase
       .from('Booking_Table')
-      .update({ booking_status: 'finish' })
+      .update({ booking_status: 'expired' })
       .eq('machine_id', machine.machine_id)
       .eq('booking_status', 'using');
 
     console.log(`Machine ${machine.machine_id} reservation expired → available`);
+
+    await allocateWaitingQueueToMachine(machine.machine_id);
   }
 }, 5000);
 
@@ -645,6 +667,7 @@ setInterval(async () => {
     .is("pickup_end_at", null);
 
   if (!washingEndList) return;
+
   for (const m of washingEndList) {
     const finishTime = new Date(m.finished_at);
     if (now < finishTime) continue;
@@ -664,8 +687,7 @@ setInterval(async () => {
       'Laundry Done! 🧺',
       `Your laundry in Machine ${m.machine_id} is done. Please collect it within 15 minutes.`
     );
-
-    console.log(`Machine ${m.machine_id} wash finished, 15-min pickup window started`);
+    console.log(`Machine ${m.machine_id} wash finished, 15-minute pickup window started`);
   }
 }, 5000);
 
@@ -680,6 +702,7 @@ setInterval(async () => {
     .not("pickup_end_at", "is", null);
 
   if (!pickupExpireList) return;
+
   for (const m of pickupExpireList) {
     const pickupEnd = new Date(m.pickup_end_at);
     if (now < pickupEnd) continue;
@@ -698,7 +721,6 @@ setInterval(async () => {
       'Pick-up Time Expired ⚠️',
       `You didn't collect from Machine ${m.machine_id} in time. Others may now assist in moving your laundry.`
     );
-
     console.log(`Machine ${m.machine_id} pickup expired → overdue`);
   }
 }, 5000);
@@ -770,16 +792,16 @@ app.get("/api/check-active-assistance", async (req, res) => {
     const { data, error } = await supabase
       .from("Assistance_Record_Table")
       .select("record_id")
-      .eq("machine_id", machine_id)      
+      .eq("machine_id", machine_id)
       .eq("is_assisted_active", true)
       .eq("assistance_status", "unreview");
 
     if (error) throw error;
-
     return res.json({
       success: true,
-      has_active_assist: data.length > 0   
+      has_active_assist: data.length > 0
     });
+
   } catch (err) {
     console.error(err);
     return res.json({ success: false, has_active_assist: false });
@@ -850,6 +872,7 @@ app.post("/api/start-assist-timer", async (req, res) => {
     }, 900000);
 
     return res.json({ success: true, record_id: recordId });
+
   } catch (err) {
     console.error(err);
     return res.json({ success: false, error: err.message });
@@ -858,7 +881,6 @@ app.post("/api/start-assist-timer", async (req, res) => {
 
 app.post("/api/submit-collect-choice", async (req, res) => {
   const { record_id, machine_id, choice } = req.body;
-
   if (!record_id || !machine_id || !choice) {
     return res.json({ success: false, message: "Missing parameters" });
   }
@@ -882,7 +904,6 @@ app.post("/api/submit-collect-choice", async (req, res) => {
         .single();
 
       const reservedEndAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
-
       await supabase
         .from("Machine_Table")
         .update({
@@ -892,6 +913,7 @@ app.post("/api/submit-collect-choice", async (req, res) => {
           current_user_id: record?.helper_user_id  // 机器使用者更新为 helper，后续 FCM 通知发给他
         })
         .eq("machine_id", machine_id);
+
     } else {
       // No：恢复可用，清空预约、结束时间
       await supabase
@@ -902,11 +924,14 @@ app.post("/api/submit-collect-choice", async (req, res) => {
           finished_at: null
         })
         .eq("machine_id", machine_id);
+
+      await allocateWaitingQueueToMachine(machine_id);
     }
 
     return res.json({ success: true, new_status: newStatus });
+
   } catch (err) {
-    console.error("submit‑collect‑choice error:", err);
+    console.error("submit-collect-choice error:", err);
     return res.json({ success: false, message: "Database error" });
   }
 });
@@ -976,7 +1001,6 @@ app.get("/api/get-pending-review-list", async (req, res) => {
     .eq("assistance_status", "unreview");
 
   if (error) return res.json({ success: false, error: error.message });
-
   return res.json({ success: true, pending_list: data });
 });
 
@@ -987,7 +1011,7 @@ app.get('/get-available-locker', async (req, res) => {
       .from('Locker_Table')
       .select('locker_id')
       .eq('locker_status', 'available')
-      .order('locker_id', { ascending: true }) 
+      .order('locker_id', { ascending: true })
       .limit(1);
 
     if (error) throw error;
@@ -1003,12 +1027,14 @@ app.get('/get-available-locker', async (req, res) => {
         success: true,
         locker_id: lockerId
       });
+
     } else {
       return res.json({
         success: false,
         message: 'No available lockers'
       });
     }
+
   } catch (err) {
     console.error(err);
     res.status(500).json({ success: false, message: 'Server error' });
