@@ -433,6 +433,8 @@ app.get('/api/user/:userId', async (req, res) => {
 app.post('/api/machines/:id/start', async (req, res) => {
   try {
     const machine_id = req.params.id;
+    // needs_dryer: whether the user wants a dryer auto-reserved after washing finishes
+    const { needs_dryer } = req.body;
 
     const { data: machine, error: getError } = await supabase
       .from('Machine_Table')
@@ -458,6 +460,14 @@ app.post('/api/machines/:id/start', async (req, res) => {
         reserved_end_at: null // clear reservation end time since cycle has started
       })
       .eq('machine_id', machine_id);
+
+    // Record the user's dryer preference on the active booking for this machine,
+    // so the post-wash timer can auto-transfer them to a dryer or dryer queue
+    await supabase
+      .from('Booking_Table')
+      .update({ needs_dryer: needs_dryer === true })
+      .eq('machine_id', machine_id)
+      .eq('booking_status', 'using');
 
     return res.json({
       success: true,
