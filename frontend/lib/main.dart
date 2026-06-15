@@ -1024,12 +1024,49 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
   }
 
   // clicking the "Start Washing" button will trigger this function, which sends a request to the backend to start the washing process; upon successful response, it fetches the latest machine info to update the UI (e.g., show the countdown timer); if there's an error during the request, it shows a snackbar with an error message; throughout the process, it manages a loading state to disable the button and show a loading indicator while the request is in progress
-  Future<void> startWashing() async {
+  // Triggered by the "Start Washing" button. For washers, first ask whether the user
+  // wants a dryer auto-reserved after the wash finishes (optional auto dryer queue transfer);
+  // dryers start directly without the prompt.
+  Future<void> _onStartPressed() async {
+    final bool isWasher = widget.machineId.startsWith('W');
+    if (!isWasher) {
+      await startWashing();
+      return;
+    }
+
+    final bool? wantDryer = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Need a dryer after washing?"),
+        content: const Text(
+          "If you choose Yes, we will automatically reserve a dryer for you (or add you to the dryer queue) once your wash is done.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("No, thanks"),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Yes, reserve a dryer"),
+          ),
+        ],
+      ),
+    );
+
+    // User dismissed the dialog without choosing → do not start
+    if (wantDryer == null) return;
+
+    await startWashing(needsDryer: wantDryer);
+  }
+
+  Future<void> startWashing({bool needsDryer = false}) async {
     setState(() => isLoading = true);
     try {
       final res = await http.post(
         Uri.parse("$baseUrl/api/machines/${widget.machineId}/start"),
         headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"needs_dryer": needsDryer}),
       );
       final map = jsonDecode(res.body);
       if (map["success"] == true) {
@@ -1194,7 +1231,7 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(
-                      onPressed: isLoading ? null : startWashing,
+                      onPressed: isLoading ? null : _onStartPressed,
                       style: ElevatedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 18),
                         backgroundColor: Colors.blue,
