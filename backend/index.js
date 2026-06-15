@@ -744,10 +744,13 @@ setInterval(async () => {
           );
           console.log(`Auto-transfer: dryer ${dryerId} reserved for user ${m.current_user_id}`);
         } else {
-          // No dryer free → add the user to the dryer waiting queue
+          // No dryer free → add the user to the dryer waiting queue.
+          // machine_type must be set so allocateWaitingQueueToMachine() picks them up
+          // when a dryer is later released.
           await supabase.from("Booking_Table").insert([
             {
               user_id: m.current_user_id,
+              machine_type: "dryer",
               booking_status: "waiting",
               needs_dryer: true
             }
