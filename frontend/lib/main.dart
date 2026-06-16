@@ -528,31 +528,6 @@ Future<void> queueDryer() async {
       ),
 
       const SizedBox(height: 40),
-
-      // Auto Transfer Switch
-      Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          const Text(
-            "Auto transfer to dryer queue",
-            style: TextStyle(fontSize: 16),
-          ),
-          Switch(
-            value: autoTransfer,
-            trackColor: WidgetStateColor.resolveWith((states) {
-              if (states.contains(WidgetState.selected)) {
-                return Colors.green; // Active state color
-              }
-              return Colors.grey.shade400; // Inactive state color
-            }),
-            onChanged: (val) {
-              setState(() {
-                autoTransfer = val;
-              });
-            },
-          )
-        ],
-      )
     ],
   ),
 );
@@ -1042,13 +1017,13 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
           "If you choose Yes, we will automatically reserve a dryer for you (or add you to the dryer queue) once your wash is done.",
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("No, thanks"),
-          ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text("Yes, reserve a dryer"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("No, just wash"),
           ),
         ],
       ),
