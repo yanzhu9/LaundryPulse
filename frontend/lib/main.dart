@@ -665,7 +665,7 @@ class _HeatMapPageState extends State<HeatMapPage> {
     if (_loading) return;
     _loading = true;
     try {
-      final uri = Uri.parse("https://laundrypulse.onrender.com/api/usage-heatmap-stats");
+      final uri = Uri.parse("https://laundrypulse-gf1v.onrender.com/api/usage-heatmap-stats");
       final res = await http.get(uri);
 
       if (res.statusCode != 200) {
