@@ -501,7 +501,8 @@ app.post('/api/machines/:id/start', async (req, res) => {
   try {
     const machine_id = req.params.id;
     // needs_dryer: whether the user wants a dryer auto-reserved after washing finishes
-    const { needs_dryer } = req.body;
+    // mode: selected cycle duration in minutes (30/45/60)
+    const { needs_dryer, mode } = req.body;
 
     const { data: machine, error: getError } = await supabase
       .from('Machine_Table')
@@ -517,8 +518,10 @@ app.post('/api/machines/:id/start', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Machine is not in occupied state' });
     }
 
-    // Assume wash duration is 30 min for dryers and 34 min for washers (including drying time)
-    const addMin = machine_id.startsWith('W') ? 34 : 30;
+    // Use the user-selected mode (30/45/60 min); fall back to default if missing/invalid
+    const isWasher = machine_id.startsWith('W');
+    const validModes = isWasher ? WASH_MODES : DRY_MODES;
+    const addMin = validModes.includes(mode) ? mode : DEFAULT_MODE_MIN;
     const finishedAt = new Date(Date.now() + addMin * 60 * 1000).toISOString();
 
     await supabase
