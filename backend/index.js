@@ -209,8 +209,10 @@ app.get('/machines', async (req, res) => {
 app.post("/api/queue-book", async (req, res) => {
   try {
     const { user_id, type } = req.body;
-    const WASHER_CYCLE = 34;
-    const DRYER_CYCLE = 30;
+    // Mode (30/45/60) isn't chosen until the user starts the machine, so use the
+    // middle option (45 min) as the estimate for queue wait-time calculations.
+    const WASHER_CYCLE = 45;
+    const DRYER_CYCLE = 45;
     const PICKUP_GRACE = 15;
     const cycleBase = type === "washer" ? WASHER_CYCLE : DRYER_CYCLE;
     // Estimated total time for one machine cycle including pickup grace, used for calculating queue wait time when no machines are currently available
