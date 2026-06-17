@@ -542,6 +542,20 @@ app.post('/api/machines/:id/start', async (req, res) => {
       .eq('machine_id', machine_id)
       .eq('booking_status', 'using');
 
+    // Log this usage for analytics (one row per start = one usage session).
+    // weekday: 0=Mon ... 6=Sun ; hour: 0-23 (local)
+    const now = new Date();
+    await supabase.from("Usage_Log_Table").insert([
+      {
+        user_id: machine.current_user_id,
+        machine_id: machine_id,
+        machine_type: isWasher ? "washer" : "dryer",
+        mode_min: addMin,
+        weekday: (now.getDay() + 6) % 7, // JS: 0=Sun → convert to 0=Mon
+        hour: now.getHours()
+      }
+    ]);
+
     return res.json({
       success: true,
       message: `Washing started for machine ${machine_id}. Estimated finish in ${addMin} minutes.`,
