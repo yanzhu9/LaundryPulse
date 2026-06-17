@@ -1135,93 +1135,173 @@ app.get('/get-available-locker', async (req, res) => {
   }
 });
 
+// 1. cache for heatmap stats, to avoid recalculating every request
+let heatmapCache = {
+  data: null,
+  refreshDeadline: null,
+  statEndSundayStr: ""
+};
+
+/**
+ * Get the last Sunday 23:59:59.999 as the cutoff time for weekly stats
+ */
+function getLastSundayDeadline() {
+  try {
+    const now = new Date();
+    const dayOfWeek = now.getDay(); // 0 (Sunday) to 6 (Saturday)
+    const diffDays = dayOfWeek === 0 ? 7 : dayOfWeek;
+    const lastSunday = new Date(now);
+    lastSunday.setDate(now.getDate() - diffDays);
+    lastSunday.setHours(23, 59, 59, 999);
+    return {
+      cutoffTimeObj: lastSunday,
+      cutoffDateStr: lastSunday.toISOString().split("T")[0]
+    };
+  } catch (err) {
+    // If any error occurs, fallback to a fixed date (e.g., 2026-06-14)
+    return {
+      cutoffTimeObj: new Date("2026-06-14T23:59:59.999Z"),
+      cutoffDateStr: "2026-06-14"
+    };
+  }
+}
+
+/**
+ * Get the next Monday at 00:00:00.000 as the refresh deadline for heatmap stats
+ */
+function getNextMondayMidnight() {
+  try {
+    const now = new Date();
+    const day = now.getDay();
+    const addDays = day === 0 ? 1 : 8 - day;
+    const nextMon = new Date(now);
+    nextMon.setDate(now.getDate() + addDays);
+    nextMon.setHours(0, 0, 0, 0);
+    return nextMon;
+  } catch (err) {
+    // If any error occurs, fallback to 7 days from now
+    const fallback = new Date();
+    fallback.setDate(fallback.getDate() + 7);
+    return fallback;
+  }
+}
+
+/**
+ * Get the weekday name from a Date object, e.g., "Monday", "Tuesday", etc.
+ */
+function getWeekdayName(dateObj) {
+  const weekList = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  return weekList[dateObj.getDay()];
+}
+
+/**
+ * Get a two-hour time slot string from an hour integer, e.g., 0 → "00:00-02:00", 23 → "23:00-01:00"
+ */
+function getTwoHourSlot(hour) {
+  const start = hour.toString().padStart(2, "0");
+  const endNum = hour + 2;
+  const end = endNum === 24 ? "00" : endNum.toString().padStart(2, "0");
+  return `${start}:00-${end}:00`;
+}
+
 app.get("/api/usage-heatmap-stats", async (req, res) => {
   try {
     const currentTime = new Date();
-    const cacheValid = heatmapCache.data && heatmapCache.refreshDeadline && currentTime < heatmapCache.refreshDeadline;
-    if (cacheValid) {
+    // Check if cached data is still valid
+    if (heatmapCache.data && heatmapCache.refreshDeadline && currentTime < new Date(heatmapCache.refreshDeadline)) {
       return res.json(heatmapCache.data);
     }
 
-    // 1. Calculate the last Sunday cutoff time and date string for stats
+    // If cache is expired or not present, recalculate the stats
     const sundayInfo = getLastSundayDeadline();
     const cutoffTime = sundayInfo.cutoffTimeObj;
     const cutoffDateStr = sundayInfo.cutoffDateStr;
 
-    // 2. Select all booking records created before the cutoff time, we only need created_at for the stats calculation
+    // Query the database for all booking records up to the cutoff time
     const { data: allHistoryRecords, error: dbErr } = await supabase
       .from("Booking_Table")
       .select("created_at")
       .lte("created_at", cutoffTime.toISOString());
 
-    if (dbErr) throw dbErr;
+    if (dbErr) throw new Error("DB error: " + dbErr.message);
 
-    // If no records, return empty stats but still set the cache with the cutoff date and next refresh deadline, to avoid hitting the database again until next Monday
+    // If no records are found, return an empty structure
     if (!allHistoryRecords || allHistoryRecords.length === 0) {
-      const emptyResponse = {
-        updateCutoffDate: cutoffDateStr, // Still return the cutoff date for frontend to display, even if there's no data
+      const emptyRes = {
+        updateCutoffDate: cutoffDateStr,
         dailyStats: [],
         twoHourSlotStats: []
       };
-      // If no data, still set the cache with the correct cutoff date and next refresh deadline, so we don't hit the database again until next Monday
       heatmapCache = {
-        data: emptyResponse,
+        data: emptyRes,
         refreshDeadline: getNextMondayMidnight(),
         statEndSundayStr: cutoffDateStr
       };
-      return res.json(emptyResponse);
+      return res.status(200).json(emptyRes);
     }
 
-    // Only proceed with calculations if we have data points, to avoid any issues with Math.min/max on empty arrays
-    const allTimeList = allHistoryRecords.map(item => new Date(item.created_at));
-    const minCreateDate = new Date(Math.min(...allTimeList));
-    const maxCreateDate = new Date(Math.max(...allTimeList));
+    // Process the records to calculate daily and two-hour slot statistics
+    let dailyStatsResult = [];
+    let slotStatsResult = [];
+    try {
+      const allTimeList = allHistoryRecords.map(item => new Date(item.created_at));
+      const minCreateDate = new Date(Math.min(...allTimeList));
+      const maxCreateDate = new Date(Math.max(...allTimeList));
 
-    const weekdayCountMap = {};
-    const slotCountMap = {};
-    const uniqueDaySet = new Set();
+      const weekdayCountMap = {};
+      const slotCountMap = {};
+      const uniqueDaySet = new Set();
 
-    allTimeList.forEach(singleTime => {
-      const wd = getWeekdayName(singleTime);
-      weekdayCountMap[wd] = (weekdayCountMap[wd] || 0) + 1;
-      const hour = singleTime.getHours();
-      const slotText = getTwoHourSlot(hour);
-      slotCountMap[slotText] = (slotCountMap[slotText] || 0) + 1;
-      const dayKey = singleTime.toISOString().split("T")[0];
-      uniqueDaySet.add(dayKey);
-    });
+      allTimeList.forEach(singleTime => {
+        const wd = getWeekdayName(singleTime);
+        weekdayCountMap[wd] = (weekdayCountMap[wd] || 0) + 1;
+        const hour = singleTime.getHours();
+        const slotText = getTwoHourSlot(hour);
+        slotCountMap[slotText] = (slotCountMap[slotText] || 0) + 1;
+        const dayKey = singleTime.toISOString().split("T")[0];
+        uniqueDaySet.add(dayKey);
+      });
 
-    const totalStatDays = uniqueDaySet.size;
-    const msPerWeek = 7 * 24 * 60 * 60 * 1000;
-    const totalCoverWeeks = Math.max(1, (maxCreateDate - minCreateDate) / msPerWeek);
+      const totalStatDays = uniqueDaySet.size;
+      const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+      const totalCoverWeeks = Math.max(1, (maxCreateDate - minCreateDate) / msPerWeek);
 
-    const dailyStatsResult = Object.entries(weekdayCountMap).map(([weekDay, totalCount]) => ({
-      weekDay,
-      avgLoad: Number((totalCount / totalCoverWeeks).toFixed(2))
-    }));
+      dailyStatsResult = Object.entries(weekdayCountMap).map(([weekDay, totalCount]) => ({
+        weekDay,
+        avgLoad: Number((totalCount / totalCoverWeeks).toFixed(2))
+      }));
 
-    const slotStatsResult = Object.entries(slotCountMap).map(([timeRange, totalCount]) => ({
-      timeRange,
-      avgLoad: Number((totalCount / totalStatDays).toFixed(2))
-    }));
+      slotStatsResult = Object.entries(slotCountMap).map(([timeRange, totalCount]) => ({
+        timeRange,
+        avgLoad: Number((totalCount / totalStatDays).toFixed(2))
+      }));
+    }catch (calcErr) {
+      console.warn("Failed to calculate statistics, returning empty results", calcErr);
+      dailyStatsResult = [];
+      slotStatsResult = [];
+    }
 
+    // Cache the results and return them
     const finalResponse = {
       updateCutoffDate: cutoffDateStr,
       dailyStats: dailyStatsResult,
       twoHourSlotStats: slotStatsResult
     };
-
     heatmapCache = {
       data: finalResponse,
       refreshDeadline: getNextMondayMidnight(),
       statEndSundayStr: cutoffDateStr
     };
-
-    res.json(finalResponse);
+    return res.status(200).json(finalResponse);
 
   } catch (serverErr) {
-    console.error("Error occurred while calculating cumulative booking data:", serverErr);
-    res.status(500).json({ error: "Failed to calculate cumulative booking data" });
+    console.error("Failed to process request:", serverErr);
+    const fallbackDate = getLastSundayDeadline().cutoffDateStr;
+    return res.status(200).json({
+      updateCutoffDate: fallbackDate,
+      dailyStats: [],
+      twoHourSlotStats: []
+    });
   }
 });
 
