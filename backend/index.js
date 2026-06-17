@@ -24,6 +24,12 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 const supabase = createClient(supabaseUrl, supabaseKey);
 
+// Selectable cycle durations (minutes) for washers and dryers.
+// The user picks one of these when starting a machine.
+const WASH_MODES = [30, 45, 60];
+const DRY_MODES = [30, 45, 60];
+const DEFAULT_MODE_MIN = 45; // fallback when no/invalid mode is provided
+
 // 根据 user_id 查出该用户的 fcm_token，再通过 Firebase Admin SDK 发送推送
 // fcm_token 是用户登录时由 Flutter 端获取并上传到 User_Table 的设备标识符
 async function sendNotification(userId, title, body) {
