@@ -1319,6 +1319,93 @@ app.get("/api/usage-heatmap-stats", async (req, res) => {
   }
 });
 
+// GET /api/analytics/personal?user_id=xxx
+// Aggregates a user's usage history into habits & frequency stats.
+app.get('/api/analytics/personal', async (req, res) => {
+  try {
+    const { user_id } = req.query;
+    if (!user_id) return res.json({ success: false, message: "Missing user_id" });
+
+    // Fetch all usage logs in chronological order (oldest first)
+    const { data: logs, error } = await supabase
+      .from("Usage_Log_Table")
+      .select("machine_type, mode_min, weekday, hour, used_at")
+      .eq("user_id", user_id)
+      .order("used_at", { ascending: true });
+
+    if (error) return res.json({ success: false, error: error.message });
+
+    if (!logs || logs.length === 0) {
+      return res.json({ success: true, has_data: false });
+    }
+
+    // "Preferred" = most frequent value; ties broken by most recent use.
+    // We pass logs in chronological order, so a later occurrence wins ties.
+    const pickPreferred = (keyFn) => {
+      const count = {}, lastIdx = {};
+      logs.forEach((l, i) => {
+        const k = keyFn(l);
+        if (k === null || k === undefined) return;
+        count[k] = (count[k] || 0) + 1;
+        lastIdx[k] = i;
+      });
+      let best = null;
+      for (const k of Object.keys(count)) {
+        if (best === null ||
+            count[k] > count[best] ||
+            (count[k] === count[best] && lastIdx[k] > lastIdx[best])) {
+          best = k;
+        }
+      }
+      return best;
+    };
+
+    const washerLogs = logs.filter(l => l.machine_type === "washer");
+    const dryerLogs  = logs.filter(l => l.machine_type === "dryer");
+
+    // Distributions
+    const modeDist = {};
+    const hourDist = Array(24).fill(0);
+    const weekdayDist = Array(7).fill(0);
+    for (const l of logs) {
+      modeDist[l.mode_min] = (modeDist[l.mode_min] || 0) + 1;
+      if (l.hour != null) hourDist[l.hour]++;
+      if (l.weekday != null) weekdayDist[l.weekday]++;
+    }
+
+    // Frequency: total ÷ span in months / years (min 1 to avoid divide-by-zero)
+    const firstDate = new Date(logs[0].used_at);
+    const nowDate = new Date();
+    const monthsSpan = Math.max(1,
+      (nowDate.getFullYear() - firstDate.getFullYear()) * 12 +
+      (nowDate.getMonth() - firstDate.getMonth()) + 1);
+    const yearsSpan = Math.max(1, nowDate.getFullYear() - firstDate.getFullYear() + 1);
+
+    const round1 = (n) => Math.round(n * 10) / 10;
+    const weekdayNames = ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+
+    return res.json({
+      success: true,
+      has_data: true,
+      total_count: logs.length,
+      washer_count: washerLogs.length,
+      dryer_count: dryerLogs.length,
+      mode_distribution: modeDist,
+      hour_distribution: hourDist,
+      weekday_distribution: weekdayDist,
+      preferred_mode: Number(pickPreferred(l => l.mode_min)),
+      preferred_hour: Number(pickPreferred(l => l.hour)),
+      preferred_weekday: weekdayNames[Number(pickPreferred(l => l.weekday))],
+      washer_per_month: round1(washerLogs.length / monthsSpan),
+      dryer_per_month: round1(dryerLogs.length / monthsSpan),
+      washer_per_year: round1(washerLogs.length / yearsSpan),
+      dryer_per_year: round1(dryerLogs.length / yearsSpan)
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // test endpoint to verify backend and database connection
 app.get('/', (req, res) => {
   res.send('Backend deployed successfully! Connected to Supabase database.');
