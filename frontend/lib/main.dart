@@ -999,16 +999,37 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
   }
 
   // clicking the "Start Washing" button will trigger this function, which sends a request to the backend to start the washing process; upon successful response, it fetches the latest machine info to update the UI (e.g., show the countdown timer); if there's an error during the request, it shows a snackbar with an error message; throughout the process, it manages a loading state to disable the button and show a loading indicator while the request is in progress
-  // Triggered by the "Start Washing" button. For washers, first ask whether the user
-  // wants a dryer auto-reserved after the wash finishes (optional auto dryer queue transfer);
-  // dryers start directly without the prompt.
+  // Triggered by the "Start" button. First ask the user to pick a cycle duration
+  // (30/45/60 min). For washers, then ask whether to auto-reserve a dryer.
   Future<void> _onStartPressed() async {
     final bool isWasher = widget.machineId.startsWith('W');
+    final String verb = isWasher ? "wash" : "dry";
+
+    // Step 1: choose cycle duration
+    final int? mode = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text("Choose $verb duration"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [30, 45, 60].map((m) {
+            return ListTile(
+              title: Text("$m min"),
+              onTap: () => Navigator.pop(ctx, m),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+    if (mode == null) return; // dismissed → don't start
+
+    // Dryers start directly after picking duration
     if (!isWasher) {
-      await startWashing();
+      await startWashing(mode: mode);
       return;
     }
 
+    // Step 2 (washer only): ask about dryer auto-reservation
     final bool? wantDryer = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1028,20 +1049,18 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
         ],
       ),
     );
-
-    // User dismissed the dialog without choosing → do not start
     if (wantDryer == null) return;
 
-    await startWashing(needsDryer: wantDryer);
+    await startWashing(mode: mode, needsDryer: wantDryer);
   }
 
-  Future<void> startWashing({bool needsDryer = false}) async {
+  Future<void> startWashing({required int mode, bool needsDryer = false}) async {
     setState(() => isLoading = true);
     try {
       final res = await http.post(
         Uri.parse("$baseUrl/api/machines/${widget.machineId}/start"),
         headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"needs_dryer": needsDryer}),
+        body: jsonEncode({"mode": mode, "needs_dryer": needsDryer}),
       );
       final map = jsonDecode(res.body);
       if (map["success"] == true) {
