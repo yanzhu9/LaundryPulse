@@ -1135,6 +1135,102 @@ app.get('/get-available-locker', async (req, res) => {
   }
 });
 
+app.get("/api/usage-heatmap-stats", async (req, res) => {
+  try {
+    const currentTime = new Date();
+    // Check if the cached data is still valid (exists and not expired)
+    const cacheValid = heatmapCache.data && heatmapCache.refreshDeadline && currentTime < heatmapCache.refreshDeadline;
+    if (cacheValid) {
+      // Cache is valid, return it directly without querying the database or recalculating
+      return res.json(heatmapCache.data);
+    }
+
+    // 1. Get the last Sunday cutoff time and date string for the query
+    const sundayInfo = getLastSundayDeadline();
+    const cutoffTime = sundayInfo.cutoffTimeObj;
+    const cutoffDateStr = sundayInfo.cutoffDateStr;
+
+    // 2. Core query: Read all records from Booking_Table where created_at ≤ last Sunday 23:59
+    // Implementation: Read all complete historical weeks, exclude data from the current incomplete week
+    const { data: allHistoryRecords, error: dbErr } = await supabase
+      .from("Booking_Table")
+      .select("created_at")
+      .lte("created_at", cutoffTime.toISOString());
+
+    if (dbErr) throw dbErr;
+
+    // If there are no historical records, return an empty response with the cutoff date
+    if (!allHistoryRecords || allHistoryRecords.length === 0) {
+      const emptyRes = {
+        updateCutoffDate: cutoffDateStr,
+        dailyStats: [],
+        twoHourSlotStats: []
+      };
+      return res.json(emptyRes);
+    }
+
+    // 3. Process the historical records to calculate weekday and 2-hour slot statistics
+    const allTimeList = allHistoryRecords.map(item => new Date(item.created_at));
+    const minCreateDate = new Date(Math.min(...allTimeList));
+    const maxCreateDate = new Date(Math.max(...allTimeList));
+
+    const weekdayCountMap = {};
+    const slotCountMap = {};
+    const uniqueDaySet = new Set();
+
+    allTimeList.forEach(singleTime => {
+      // Count the number of bookings for each weekday (Monday to Sunday)
+      const wd = getWeekdayName(singleTime);
+      weekdayCountMap[wd] = (weekdayCountMap[wd] || 0) + 1;
+      // Count the number of bookings for each 2-hour time slot
+      const hour = singleTime.getHours();
+      const slotText = getTwoHourSlot(hour);
+      slotCountMap[slotText] = (slotCountMap[slotText] || 0) + 1;
+      // Record unique days for calculating average per day later
+      const dayKey = singleTime.toISOString().split("T")[0];
+      uniqueDaySet.add(dayKey);
+    });
+
+    // 4. Calculate averages based on the counts and time spans
+    const totalStatDays = uniqueDaySet.size;
+    const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+    // Total coverage weeks = (maxCreateDate - minCreateDate) / msPerWeek, at least 1 week
+    const totalCoverWeeks = Math.max(1, (maxCreateDate - minCreateDate) / msPerWeek);
+
+    // Weekday dimension: Total historical bookings for each weekday ÷ Total coverage weeks = Average weekly bookings for that day
+    const dailyStatsResult = Object.entries(weekdayCountMap).map(([weekDay, totalCount]) => ({
+      weekDay,
+      avgLoad: Number((totalCount / totalCoverWeeks).toFixed(2))
+    }));
+
+    // 2-hour slot dimension: Total historical bookings for each 2-hour slot ÷ Total unique days = Average daily bookings for that time slot
+    const slotStatsResult = Object.entries(slotCountMap).map(([timeRange, totalCount]) => ({
+      timeRange,
+      avgLoad: Number((totalCount / totalStatDays).toFixed(2))
+    }));
+
+    // 5. Return the final response with cutoff date, daily stats, and 2-hour slot stats
+    const finalResponse = {
+      updateCutoffDate: cutoffDateStr,
+      dailyStats: dailyStatsResult,
+      twoHourSlotStats: slotStatsResult
+    };
+
+    // 6. Cache the result for future requests until next Monday midnight 
+    heatmapCache = {
+      data: finalResponse,
+      refreshDeadline: getNextMondayMidnight(),
+      statEndSundayStr: cutoffDateStr
+    };
+
+    res.json(finalResponse);
+
+  } catch (serverErr) {
+    console.error("Error occurred while calculating cumulative booking data:", serverErr);
+    res.status(500).json({ error: "Failed to calculate cumulative booking data" });
+  }
+});
+
 // test endpoint to verify backend and database connection
 app.get('/', (req, res) => {
   res.send('Backend deployed successfully! Connected to Supabase database.');
