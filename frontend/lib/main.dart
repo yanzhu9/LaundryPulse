@@ -557,18 +557,25 @@ class HeatMapPage extends StatefulWidget {
 class _HeatMapPageState extends State<HeatMapPage> {
   bool dailyExpanded = false;
   bool slotExpanded = false;
+  bool _loading = false;
+  bool _hasLoadedBackendData = false;
 
   List<DailyLoadItem> dailyData = [];
   List<TimeSlotItem> slotData = [];
-  String dataUpdateDate = "2026-06-17";
+  String dataUpdateDate = "Loading stats...";
 
   late List<DailyLoadItem> sortedDaily = [];
   late List<TimeSlotItem> sortedSlot = [];
 
-  DailyLoadItem get peakDaily => dailyData.reduce((a, b) => a.avgLoad > b.avgLoad ? a : b);
-  TimeSlotItem get peakSlot => slotData.reduce((a, b) => a.avgLoad > b.avgLoad ? a : b);
+  DailyLoadItem? get peakDaily {
+    if (dailyData.isEmpty) return null;
+    return dailyData.reduce((a, b) => a.avgLoad > b.avgLoad ? a : b);
+  }
+  TimeSlotItem? get peakSlot {
+    if (slotData.isEmpty) return null;
+    return slotData.reduce((a, b) => a.avgLoad > b.avgLoad ? a : b);
+  }
 
-  // Based on the ratio of avgLoad to maxValue, return a color for the bar
   Color getBarColor(double ratio) {
     if (ratio >= 0.9) return const Color(0xFF0D47A1);
     if (ratio >= 0.75) return const Color(0xFF1565C0);
@@ -654,84 +661,79 @@ class _HeatMapPageState extends State<HeatMapPage> {
     );
   }
 
-  // Fetch heatmap data from backend API and update state
-Future<void> fetchHeatmapData() async {
-  try {
-    // 1. Request data from backend API
-    final uri = Uri.parse("https://laundrypulse.onrender.com/api/usage-heatmap-stats");
-    final res = await http.get(uri);
+  Future<void> fetchHeatmapData() async {
+    if (_loading) return;
+    _loading = true;
+    try {
+      final uri = Uri.parse("https://laundrypulse.onrender.com/api/usage-heatmap-stats");
+      final res = await http.get(uri);
 
-    // 2. Validate status code, throw exception for non-200 responses
-    if (res.statusCode != 200) {
-      throw Exception("API response code: ${res.statusCode}");
+      if (res.statusCode != 200) {
+        throw Exception("API response code: ${res.statusCode}");
+      }
+
+      final rawJson = jsonDecode(res.body);
+      final String refreshMondayDate = rawJson["updateCutoffDate"] ?? DateTime.now().toString().split(" ")[0];
+      final List<dynamic> rawDaily = rawJson["dailyStats"] ?? [];
+      final List<dynamic> rawSlot = rawJson["twoHourSlotStats"] ?? [];
+
+      if (!mounted) return;
+      setState(() {
+        dataUpdateDate = refreshMondayDate;
+        dailyData = rawDaily
+            .map((e) => DailyLoadItem(
+                  weekDay: e["weekDay"] ?? "",
+                  avgLoad: (e["avgLoad"] ?? 0).toDouble(),
+                ))
+            .toList();
+        slotData = rawSlot
+            .map((e) => TimeSlotItem(
+                  timeRange: e["timeRange"] ?? "",
+                  avgLoad: (e["avgLoad"] ?? 0).toDouble(),
+                ))
+            .toList();
+        sortedDaily = List.from(dailyData)..sort((a, b) => b.avgLoad.compareTo(a.avgLoad));
+        sortedSlot = List.from(slotData)..sort((a, b) => b.avgLoad.compareTo(a.avgLoad));
+        _hasLoadedBackendData = true;
+      });
+    } catch (err) {
+      debugPrint("Heatmap data fetch error: $err");
+      if (!mounted) return;
+      // If backend data fetch fails, show offline preview data (hardcoded)
+      if (_hasLoadedBackendData) return;
+
+      setState(() {
+        dataUpdateDate = "Offline Preview (Weekly stats unavailable)";
+        dailyData = [
+          DailyLoadItem(weekDay: "Monday", avgLoad: 4.2),
+          DailyLoadItem(weekDay: "Tuesday", avgLoad: 3.1),
+          DailyLoadItem(weekDay: "Wednesday", avgLoad: 5.0),
+          DailyLoadItem(weekDay: "Thursday", avgLoad: 2.8),
+          DailyLoadItem(weekDay: "Friday", avgLoad: 6.7),
+          DailyLoadItem(weekDay: "Saturday", avgLoad: 3.5),
+          DailyLoadItem(weekDay: "Sunday", avgLoad: 2.2),
+        ];
+        slotData = [
+          TimeSlotItem(timeRange: "00:00-02:00", avgLoad: 1.1),
+          TimeSlotItem(timeRange: "02:00-04:00", avgLoad: 0.4),
+          TimeSlotItem(timeRange: "04:00-06:00", avgLoad: 0.3),
+          TimeSlotItem(timeRange: "06:00-08:00", avgLoad: 2.1),
+          TimeSlotItem(timeRange: "08:00-10:00", avgLoad: 4.8),
+          TimeSlotItem(timeRange: "10:00-12:00", avgLoad: 3.2),
+          TimeSlotItem(timeRange: "12:00-14:00", avgLoad: 2.3),
+          TimeSlotItem(timeRange: "14:00-16:00", avgLoad: 2.7),
+          TimeSlotItem(timeRange: "16:00-18:00", avgLoad: 4.1),
+          TimeSlotItem(timeRange: "18:00-20:00", avgLoad: 6.2),
+          TimeSlotItem(timeRange: "20:00-22:00", avgLoad: 3.6),
+          TimeSlotItem(timeRange: "22:00-00:00", avgLoad: 1.5),
+        ];
+        sortedDaily = List.from(dailyData)..sort((a, b) => b.avgLoad.compareTo(a.avgLoad));
+        sortedSlot = List.from(slotData)..sort((a, b) => b.avgLoad.compareTo(a.avgLoad));
+      });
+    } finally {
+      _loading = false;
     }
-
-    final rawJson = jsonDecode(res.body);
-
-    // 3. Null condition handling: if fields are missing, use defaults to prevent crashes
-    final String refreshMondayDate = rawJson["updateCutoffDate"] ?? DateTime.now().toString().split(" ")[0];
-    final List<dynamic> rawDaily = rawJson["dailyStats"] ?? [];
-    final List<dynamic> rawSlot = rawJson["twoHourSlotStats"] ?? [];
-
-    // 4. If page is already disposed, do not call setState to avoid errors
-    if (!mounted) return;
-
-    setState(() {
-      // Get the last Monday date for display, if backend does not provide, use current date as fallback (though it may be misleading, at least it won't crash and will indicate data issue)
-      dataUpdateDate = refreshMondayDate;
-
-      dailyData = rawDaily
-          .map((e) => DailyLoadItem(
-                weekDay: e["weekDay"] ?? "",
-                avgLoad: (e["avgLoad"] ?? 0).toDouble(),
-              ))
-          .toList();
-
-      slotData = rawSlot
-          .map((e) => TimeSlotItem(
-                timeRange: e["timeRange"] ?? "",
-                avgLoad: (e["avgLoad"] ?? 0).toDouble(),
-              ))
-          .toList();
-
-      sortedDaily = List.from(dailyData)..sort((a, b) => b.avgLoad.compareTo(a.avgLoad));
-      sortedSlot = List.from(slotData)..sort((a, b) => b.avgLoad.compareTo(a.avgLoad));
-    });
-  } catch (err) {
-    debugPrint("Heatmap data fetch error: $err");
-    if (!mounted) return;
-
-    setState(() {
-      // If fetching data fails, use hardcoded sample data for offline preview, and set update date to indicate data is unavailable
-      dataUpdateDate = "Offline Preview (Weekly stats unavailable)";
-      dailyData = [
-        DailyLoadItem(weekDay: "Monday", avgLoad: 4.2),
-        DailyLoadItem(weekDay: "Tuesday", avgLoad: 3.1),
-        DailyLoadItem(weekDay: "Wednesday", avgLoad: 5.0),
-        DailyLoadItem(weekDay: "Thursday", avgLoad: 2.8),
-        DailyLoadItem(weekDay: "Friday", avgLoad: 6.7),
-        DailyLoadItem(weekDay: "Saturday", avgLoad: 3.5),
-        DailyLoadItem(weekDay: "Sunday", avgLoad: 2.2),
-      ];
-      slotData = [
-        TimeSlotItem(timeRange: "00:00-02:00", avgLoad: 1.1),
-        TimeSlotItem(timeRange: "02:00-04:00", avgLoad: 0.4),
-        TimeSlotItem(timeRange: "04:00-06:00", avgLoad: 0.3),
-        TimeSlotItem(timeRange: "06:00-08:00", avgLoad: 2.1),
-        TimeSlotItem(timeRange: "08:00-10:00", avgLoad: 4.8),
-        TimeSlotItem(timeRange: "10:00-12:00", avgLoad: 3.2),
-        TimeSlotItem(timeRange: "12:00-14:00", avgLoad: 2.3),
-        TimeSlotItem(timeRange: "14:00-16:00", avgLoad: 2.7),
-        TimeSlotItem(timeRange: "16:00-18:00", avgLoad: 4.1),
-        TimeSlotItem(timeRange: "18:00-20:00", avgLoad: 6.2),
-        TimeSlotItem(timeRange: "20:00-22:00", avgLoad: 3.6),
-        TimeSlotItem(timeRange: "22:00-00:00", avgLoad: 1.5),
-      ];
-      sortedDaily = List.from(dailyData)..sort((a, b) => b.avgLoad.compareTo(a.avgLoad));
-      sortedSlot = List.from(slotData)..sort((a, b) => b.avgLoad.compareTo(a.avgLoad));
-    });
   }
-}
 
   @override
   void initState() {
@@ -741,13 +743,6 @@ Future<void> fetchHeatmapData() async {
 
   @override
   Widget build(BuildContext context) {
-    if (dailyData.isEmpty || slotData.isEmpty) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-
-    final double maxDailyLoad = sortedDaily.first.avgLoad;
-    final double maxSlotLoad = sortedSlot.first.avgLoad;
-
     final List<DailyLoadItem> displayDaily = dailyExpanded ? sortedDaily : sortedDaily.take(3).toList();
     final List<TimeSlotItem> displaySlot = slotExpanded ? sortedSlot : sortedSlot.take(4).toList();
 
@@ -763,7 +758,6 @@ Future<void> fetchHeatmapData() async {
             ),
             const SizedBox(height: 28),
 
-            //Average Daily Loads
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
@@ -777,39 +771,33 @@ Future<void> fetchHeatmapData() async {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        "Average Daily Loads",
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                      ),
-                      Text(
-                        "Peak: ${peakDaily.weekDay}",
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF1565C0),
-                        ),
-                      ),
+                      const Text("Average Daily Loads", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      if (peakDaily != null)
+                        Text("Peak: ${peakDaily!.weekDay}", style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1565C0))),
                     ],
                   ),
                   const SizedBox(height: 14),
-                  ...displayDaily.map((item) => buildDailyBar(item, maxDailyLoad)),
-                  const SizedBox(height: 10),
-                  InkWell(
-                    onTap: () => setState(() => dailyExpanded = !dailyExpanded),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(dailyExpanded ? "Show Less" : "Show More"),
-                        Icon(dailyExpanded ? Icons.arrow_drop_up : Icons.arrow_drop_down),
-                      ],
-                    ),
-                  )
+                  dailyData.isEmpty
+                      ? const Center(child: Text("No booking records before last Sunday"))
+                      : Column(
+                          children: [
+                            ...displayDaily.map((item) => buildDailyBar(item, sortedDaily.first.avgLoad)),
+                            const SizedBox(height: 10),
+                            InkWell(
+                              onTap: () => setState(() => dailyExpanded = !dailyExpanded),
+                              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                                Text(dailyExpanded ? "Show Less" : "Show More"),
+                                Icon(dailyExpanded ? Icons.arrow_drop_up : Icons.arrow_drop_down)
+                              ]),
+                            )
+                          ],
+                        )
                 ],
               ),
             ),
 
             const SizedBox(height: 22),
 
-            //Average Loads per 2-hour Slot
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
@@ -823,32 +811,27 @@ Future<void> fetchHeatmapData() async {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        "Average Loads per 2-hour Slot",
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                      ),
-                      Text(
-                        "Peak: ${peakSlot.timeRange}",
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF1565C0),
-                        ),
-                      ),
+                      const Text("Average Loads per 2-hour Slot", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      if (peakSlot != null)
+                        Text("Peak: ${peakSlot!.timeRange}", style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF1565C0))),
                     ],
                   ),
                   const SizedBox(height: 14),
-                  ...displaySlot.map((item) => buildSlotBar(item, maxSlotLoad)),
-                  const SizedBox(height: 10),
-                  InkWell(
-                    onTap: () => setState(() => slotExpanded = !slotExpanded),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(slotExpanded ? "Show Less" : "Show More"),
-                        Icon(slotExpanded ? Icons.arrow_drop_up : Icons.arrow_drop_down),
-                      ],
-                    ),
-                  )
+                  slotData.isEmpty
+                      ? const Center(child: Text("No booking records before last Sunday"))
+                      : Column(
+                          children: [
+                            ...displaySlot.map((item) => buildSlotBar(item, sortedSlot.first.avgLoad)),
+                            const SizedBox(height: 10),
+                            InkWell(
+                              onTap: () => setState(() => slotExpanded = !slotExpanded),
+                              child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                                Text(slotExpanded ? "Show Less" : "Show More"),
+                                Icon(slotExpanded ? Icons.arrow_drop_up : Icons.arrow_drop_down)
+                              ]),
+                            )
+                          ],
+                        )
                 ],
               ),
             ),
