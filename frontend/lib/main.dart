@@ -1487,24 +1487,61 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
   Future<void> _onStartPressed() async {
     final bool isWasher = widget.machineId.startsWith('W');
     final String verb = isWasher ? "wash" : "dry";
+    final String type = isWasher ? "washer" : "dryer";
 
-    // Step 1: choose cycle duration
-    final int? mode = await showDialog<int>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text("Choose $verb duration"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [30, 45, 60].map((m) {
-            return ListTile(
-              title: Text("$m min"),
-              onTap: () => Navigator.pop(ctx, m),
-            );
-          }).toList(),
+    int? mode;
+
+    // Step 0: if the user has a preferred mode, offer to reuse it
+    try {
+      final prefRes = await http.get(
+        Uri.parse("$baseUrl/api/user-preference?user_id=$current_user_id&type=$type"),
+      );
+      final pref = jsonDecode(prefRes.body);
+      if (pref["has_preference"] == true && mounted) {
+        final int preferredMode = pref["preferred_mode"];
+        final bool? usePref = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text("Use your preferred mode?"),
+            content: Text("You usually $verb for $preferredMode min. Use this again?"),
+            actions: [
+              ElevatedButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: Text("Yes, $preferredMode min"),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text("No, choose"),
+              ),
+            ],
+          ),
+        );
+        if (usePref == null) return;        // dismissed → cancel start
+        if (usePref == true) mode = preferredMode;
+      }
+    } catch (_) {
+      // preference lookup failed → fall through to manual selection
+    }
+
+    // Step 1: choose cycle duration (only if not already set by preference)
+    if (mode == null) {
+      mode = await showDialog<int>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text("Choose $verb duration"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [30, 45, 60].map((m) {
+              return ListTile(
+                title: Text("$m min"),
+                onTap: () => Navigator.pop(ctx, m),
+              );
+            }).toList(),
+          ),
         ),
-      ),
-    );
-    if (mode == null) return; // dismissed → don't start
+      );
+      if (mode == null) return; // dismissed → don't start
+    }
 
     // Dryers start directly after picking duration
     if (!isWasher) {
