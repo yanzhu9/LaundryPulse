@@ -1406,6 +1406,52 @@ app.get('/api/analytics/personal', async (req, res) => {
   }
 });
 
+// GET /api/user-preference?user_id=xxx&type=washer
+// Returns the user's most-used mode for a given machine type,
+// used by the "use your preferred mode?" prompt before starting.
+app.get('/api/user-preference', async (req, res) => {
+  try {
+    const { user_id, type } = req.query;
+    if (!user_id || !type) {
+      return res.json({ success: false, has_preference: false });
+    }
+
+    const { data: logs, error } = await supabase
+      .from("Usage_Log_Table")
+      .select("mode_min, used_at")
+      .eq("user_id", user_id)
+      .eq("machine_type", type)
+      .order("used_at", { ascending: true });
+
+    if (error || !logs || logs.length === 0) {
+      return res.json({ success: true, has_preference: false });
+    }
+
+    // Most frequent mode; ties broken by most recent use
+    const count = {}, lastIdx = {};
+    logs.forEach((l, i) => {
+      count[l.mode_min] = (count[l.mode_min] || 0) + 1;
+      lastIdx[l.mode_min] = i;
+    });
+    let best = null;
+    for (const k of Object.keys(count)) {
+      if (best === null ||
+          count[k] > count[best] ||
+          (count[k] === count[best] && lastIdx[k] > lastIdx[best])) {
+        best = k;
+      }
+    }
+
+    return res.json({
+      success: true,
+      has_preference: true,
+      preferred_mode: Number(best)
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, has_preference: false, error: err.message });
+  }
+});
+
 // test endpoint to verify backend and database connection
 app.get('/', (req, res) => {
   res.send('Backend deployed successfully! Connected to Supabase database.');
