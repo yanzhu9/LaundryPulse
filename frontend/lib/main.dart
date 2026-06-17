@@ -956,6 +956,36 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
+  // Entry button for the personal usage analytics page
+  Widget buildAnalyticsEntry() {
+    return InkWell(
+      onTap: () {
+        if (current_user_id == null) return;
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const UsageAnalyticsPage()),
+        );
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 14),
+        margin: const EdgeInsets.only(top: 16),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: const [
+            Text("My Laundry Habits",
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+            Icon(Icons.chevron_right, color: Colors.grey),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -1030,6 +1060,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     ),
                     // New review entry at the bottom of original UI
                     buildReviewEntry(),
+                    buildAnalyticsEntry(),
                   ],
                 ),
               ),
@@ -1039,6 +1070,169 @@ class _ProfilePageState extends State<ProfilePage> {
 }
 
 const String baseUrl = "https://laundrypulse-gf1v.onrender.com";
+
+class UsageAnalyticsPage extends StatefulWidget {
+  const UsageAnalyticsPage({super.key});
+
+  @override
+  State<UsageAnalyticsPage> createState() => _UsageAnalyticsPageState();
+}
+
+class _UsageAnalyticsPageState extends State<UsageAnalyticsPage> {
+  bool loading = true;
+  bool hasData = false;
+  Map<String, dynamic> data = {};
+
+  @override
+  void initState() {
+    super.initState();
+    fetchAnalytics();
+  }
+
+  Future<void> fetchAnalytics() async {
+    try {
+      final res = await http.get(
+        Uri.parse("$baseUrl/api/analytics/personal?user_id=$current_user_id"),
+      );
+      final map = jsonDecode(res.body);
+      if (mounted) {
+        setState(() {
+          hasData = map["success"] == true && map["has_data"] == true;
+          data = map is Map<String, dynamic> ? map : {};
+          loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => loading = false);
+    }
+  }
+
+  // Same blue palette as the HeatMap page for visual consistency
+  Color getBarColor(double ratio) {
+    if (ratio >= 0.9) return const Color(0xFF0D47A1);
+    if (ratio >= 0.75) return const Color(0xFF1565C0);
+    if (ratio >= 0.55) return const Color(0xFF1976D2);
+    if (ratio >= 0.35) return const Color(0xFF42A5F5);
+    if (ratio >= 0.15) return const Color(0xFF90CAF9);
+    return const Color(0xFFBBDEFB);
+  }
+
+  Widget buildBar(String label, double value, double maxValue) {
+    final double ratio = maxValue > 0 ? value / maxValue : 0;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: SizedBox(
+        width: double.infinity,
+        child: FractionallySizedBox(
+          alignment: Alignment.centerLeft,
+          widthFactor: ratio == 0 ? 0.001 : ratio,
+          child: Container(
+            height: 26,
+            decoration: BoxDecoration(
+              color: getBarColor(ratio),
+              borderRadius: BorderRadius.circular(5),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.only(left: 10),
+              child: Text(
+                "$label  (${value.toInt()})",
+                style: TextStyle(
+                  color: ratio > 0.5 ? Colors.white : Colors.black87,
+                  fontWeight: FontWeight.w500,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget sectionTitle(String t) => Padding(
+        padding: const EdgeInsets.only(top: 22, bottom: 4),
+        child: Text(t, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: const Color.fromARGB(255, 215, 230, 243),
+        centerTitle: true,
+        title: const Text("My Laundry Habits"),
+      ),
+      body: loading
+          ? const Center(child: CircularProgressIndicator())
+          : !hasData
+              ? const Center(
+                  child: Text("Not enough data yet.\nUse a machine to start tracking.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 15, color: Colors.grey)))
+              : _buildContent(),
+    );
+  }
+
+  Widget _buildContent() {
+    final modeDist = (data["mode_distribution"] ?? {}) as Map<String, dynamic>;
+    final weekdayDist = (data["weekday_distribution"] ?? []) as List<dynamic>;
+    const weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+    double maxMode = 1, maxWeekday = 1;
+    modeDist.forEach((k, v) => maxMode = (v as num) > maxMode ? v.toDouble() : maxMode);
+    for (final v in weekdayDist) {
+      maxWeekday = (v as num) > maxWeekday ? v.toDouble() : maxWeekday;
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Summary card
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE3F2FD),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("You usually do ${data["preferred_mode"]}-min cycles "
+                    "on ${data["preferred_weekday"]}s "
+                    "around ${data["preferred_hour"]}:00.",
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 10),
+                Text("Total uses: ${data["total_count"]}   "
+                    "(Wash ${data["washer_count"]} · Dry ${data["dryer_count"]})",
+                    style: const TextStyle(fontSize: 13, color: Colors.black54)),
+                const SizedBox(height: 4),
+                Text("Wash frequency: ${data["washer_per_month"]}/month · ${data["washer_per_year"]}/year",
+                    style: const TextStyle(fontSize: 13, color: Colors.black54)),
+                Text("Dry frequency: ${data["dryer_per_month"]}/month · ${data["dryer_per_year"]}/year",
+                    style: const TextStyle(fontSize: 13, color: Colors.black54)),
+              ],
+            ),
+          ),
+
+          // Mode preference
+          sectionTitle("Mode Preference"),
+          ...["30", "45", "60"].map((m) =>
+              buildBar("$m min", (modeDist[m] ?? 0).toDouble(), maxMode)),
+
+          // Weekly pattern
+          sectionTitle("Weekly Pattern"),
+          ...List.generate(7, (i) => buildBar(
+              weekdays[i],
+              i < weekdayDist.length ? (weekdayDist[i] as num).toDouble() : 0,
+              maxWeekday)),
+        ],
+      ),
+    );
+  }
+}
 
 class PendingReviewPage extends StatefulWidget {
   final VoidCallback onReviewSubmitted;
