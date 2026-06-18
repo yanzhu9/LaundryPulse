@@ -1388,7 +1388,6 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
   int remainTotalSec = 0;
   int reservedSec = 0;
   int pickupSec = 0;
-  int aheadPeople = 0;
   bool washingStarted = false;
   bool isPickupWindow = false;
   bool isLoading = false;
@@ -1429,7 +1428,6 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
         remainTotalSec = map["remain_seconds"] ?? 0;
         reservedSec = map["reserved_remain_seconds"] ?? 0;
         pickupSec = map["pickup_remain_seconds"] ?? 0;
-        aheadPeople = map["ahead_count"] ?? 0;
         machineStatus = map["machine_status"] ?? "occupied";
         washingStarted = remainTotalSec > 0;
         isPickupWindow = pickupSec > 0;
@@ -1719,11 +1717,6 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
                       ),
                     ),
                   )
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    "Waiting Ahead: $aheadPeople",
-                    style: const TextStyle(fontSize: 19),
                   ),
                 ],
               )
