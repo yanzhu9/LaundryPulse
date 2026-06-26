@@ -1201,6 +1201,26 @@ function getNextMondayMidnight() {
 }
 
 /**
+ * Get the next Monday at 00:00:00.000 as the refresh deadline for heatmap stats
+ */
+function getNextMondayMidnight() {
+  try {
+    const now = new Date();
+    const day = now.getDay();
+    const addDays = day === 0 ? 1 : 8 - day;
+    const nextMon = new Date(now);
+    nextMon.setDate(now.getDate() + addDays);
+    nextMon.setHours(0, 0, 0, 0);
+    return nextMon;
+  } catch (err) {
+    // If any error occurs, fallback to 7 days from now
+    const fallback = new Date();
+    fallback.setDate(fallback.getDate() + 7);
+    return fallback;
+  }
+}
+
+/**
  * Get the weekday name from a Date object, e.g., "Monday", "Tuesday", etc.
  */
 function getWeekdayName(dateObj) {
@@ -1209,14 +1229,31 @@ function getWeekdayName(dateObj) {
 }
 
 /**
- * Get a two-hour time slot string from an hour integer, e.g., 0 → "00:00-02:00", 23 → "23:00-01:00"
+ * Get a two-hour time slot string from an even start hour
+ * Only accept 0,2,4...22 to avoid overlapping
  */
-function getTwoHourSlot(hour) {
-  const start = hour.toString().padStart(2, "0");
-  const endNum = hour + 2;
-  const end = endNum === 24 ? "00" : endNum.toString().padStart(2, "0");
+function getTwoHourSlot(startHour) {
+  const start = startHour.toString().padStart(2, "0");
+  const endHour = startHour + 2;
+  const end = endHour === 24 ? "00" : endHour.toString().padStart(2, "0");
   return `${start}:00-${end}:00`;
 }
+
+// Fixed 12 non-overlapping 2-hour slots covering full 24h
+const fullTwoHourSlots = [
+  "00:00-02:00",
+  "02:00-04:00",
+  "04:00-06:00",
+  "06:00-08:00",
+  "08:00-10:00",
+  "10:00-12:00",
+  "12:00-14:00",
+  "14:00-16:00",
+  "16:00-18:00",
+  "18:00-20:00",
+  "20:00-22:00",
+  "22:00-00:00"
+];
 
 app.get("/api/usage-heatmap-stats", async (req, res) => {
   try {
@@ -1239,60 +1276,60 @@ app.get("/api/usage-heatmap-stats", async (req, res) => {
 
     if (dbErr) throw new Error("DB error: " + dbErr.message);
 
-    // If no records are found, return an empty structure
-    if (!allHistoryRecords || allHistoryRecords.length === 0) {
-      const emptyRes = {
-        updateCutoffDate: cutoffDateStr,
-        dailyStats: [],
-        twoHourSlotStats: []
-      };
-      heatmapCache = {
-        data: emptyRes,
-        refreshDeadline: getNextMondayMidnight(),
-        statEndSundayStr: cutoffDateStr
-      };
-      return res.status(200).json(emptyRes);
-    }
-
     // Process the records to calculate daily and two-hour slot statistics
     let dailyStatsResult = [];
     let slotStatsResult = [];
     try {
       const allTimeList = allHistoryRecords.map(item => new Date(item.created_at));
-      const minCreateDate = new Date(Math.min(...allTimeList));
-      const maxCreateDate = new Date(Math.max(...allTimeList));
+      const uniqueDaySet = new Set();
 
       const weekdayCountMap = {};
       const slotCountMap = {};
-      const uniqueDaySet = new Set();
 
       allTimeList.forEach(singleTime => {
+        // Count weekday
         const wd = getWeekdayName(singleTime);
         weekdayCountMap[wd] = (weekdayCountMap[wd] || 0) + 1;
-        const hour = singleTime.getHours();
-        const slotText = getTwoHourSlot(hour);
+
+        // Align hour to EVEN start (0,2,4...22), eliminate overlapping slots
+        const rawHour = singleTime.getHours();
+        const slotStartHour = Math.floor(rawHour / 2) * 2;
+        const slotText = getTwoHourSlot(slotStartHour);
         slotCountMap[slotText] = (slotCountMap[slotText] || 0) + 1;
+
+        // Count unique days
         const dayKey = singleTime.toISOString().split("T")[0];
         uniqueDaySet.add(dayKey);
       });
 
-      const totalStatDays = uniqueDaySet.size;
+      const totalStatDays = uniqueDaySet.size || 1;
+      const minCreateDate = allTimeList.length ? new Date(Math.min(...allTimeList)) : new Date();
+      const maxCreateDate = allTimeList.length ? new Date(Math.max(...allTimeList)) : new Date();
       const msPerWeek = 7 * 24 * 60 * 60 * 1000;
       const totalCoverWeeks = Math.max(1, (maxCreateDate - minCreateDate) / msPerWeek);
 
+      // Daily average calculation
       dailyStatsResult = Object.entries(weekdayCountMap).map(([weekDay, totalCount]) => ({
         weekDay,
         avgLoad: Number((totalCount / totalCoverWeeks).toFixed(2))
       }));
 
-      slotStatsResult = Object.entries(slotCountMap).map(([timeRange, totalCount]) => ({
-        timeRange,
-        avgLoad: Number((totalCount / totalStatDays).toFixed(2))
-      }));
-    }catch (calcErr) {
-      console.warn("Failed to calculate statistics, returning empty results", calcErr);
+      // Force fill all 12 slots, missing ones set count = 0
+      slotStatsResult = fullTwoHourSlots.map(timeRange => {
+        const totalCount = slotCountMap[timeRange] ?? 0;
+        return {
+          timeRange,
+          avgLoad: Number((totalCount / totalStatDays).toFixed(2))
+        };
+      });
+    } catch (calcErr) {
+      console.warn("Failed to calculate statistics", calcErr);
       dailyStatsResult = [];
-      slotStatsResult = [];
+      // Still return full 12 slots even when calculation fails
+      slotStatsResult = fullTwoHourSlots.map(timeRange => ({
+        timeRange,
+        avgLoad: 0
+      }));
     }
 
     // Cache the results and return them
@@ -1311,10 +1348,14 @@ app.get("/api/usage-heatmap-stats", async (req, res) => {
   } catch (serverErr) {
     console.error("Failed to process request:", serverErr);
     const fallbackDate = getLastSundayDeadline().cutoffDateStr;
+    // Return full 12 slots on server error
     return res.status(200).json({
       updateCutoffDate: fallbackDate,
       dailyStats: [],
-      twoHourSlotStats: []
+      twoHourSlotStats: fullTwoHourSlots.map(timeRange => ({
+        timeRange,
+        avgLoad: 0
+      }))
     });
   }
 });
