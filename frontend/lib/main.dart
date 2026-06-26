@@ -577,13 +577,9 @@ class _HeatMapPageState extends State<HeatMapPage> {
   }
 
   Color getBarColor(double ratio) {
-    if (ratio >= 0.9) return const Color(0xFF0D47A1);
-    if (ratio >= 0.75) return const Color(0xFF1565C0);
-    if (ratio >= 0.55) return const Color(0xFF1976D2);
-    if (ratio >= 0.35) return const Color(0xFF42A5F5);
-    if (ratio >= 0.15) return const Color(0xFF90CAF9);
-    return const Color(0xFFBBDEFB);
-  }
+  double alpha = 0.2 + ratio * 0.8;
+  return Color(0xFF1976D2).withOpacity(alpha);
+}
 
   Widget buildDailyBar(DailyLoadItem item, double maxValue) {
     double loadRatio = item.avgLoad / maxValue;
@@ -599,6 +595,7 @@ class _HeatMapPageState extends State<HeatMapPage> {
                 widthFactor: loadRatio,
                 child: Container(
                   height: 26,
+                  clipBehavior: Clip.none,
                   decoration: BoxDecoration(
                     color: getBarColor(loadRatio),
                     borderRadius: BorderRadius.circular(5),
@@ -607,10 +604,12 @@ class _HeatMapPageState extends State<HeatMapPage> {
                     padding: const EdgeInsets.only(left: 10),
                     child: Text(
                       item.weekDay,
+                      softWrap: false,
                       style: TextStyle(
-                        color: loadRatio > 0.5 ? Colors.white : Colors.black87,
+                        color: Colors.black87,
                         fontWeight: FontWeight.w500,
                         fontSize: 13,
+                        overflow: TextOverflow.visible,
                       ),
                     ),
                   ),
@@ -637,6 +636,7 @@ class _HeatMapPageState extends State<HeatMapPage> {
                 widthFactor: loadRatio,
                 child: Container(
                   height: 26,
+                  clipBehavior: Clip.none,
                   decoration: BoxDecoration(
                     color: getBarColor(loadRatio),
                     borderRadius: BorderRadius.circular(5),
@@ -645,10 +645,12 @@ class _HeatMapPageState extends State<HeatMapPage> {
                     padding: const EdgeInsets.only(left: 10),
                     child: Text(
                       item.timeRange,
+                      softWrap: false,
                       style: TextStyle(
-                        color: loadRatio > 0.5 ? Colors.white : Colors.black87,
+                        color: Colors.black87,
                         fontWeight: FontWeight.w500,
                         fontSize: 13,
+                        overflow: TextOverflow.visible,
                       ),
                     ),
                   ),
