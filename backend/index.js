@@ -1255,96 +1255,110 @@ const fullTwoHourSlots = [
   "22:00-00:00"
 ];
 
+/**
+ * Compute the hostel-wide usage heatmap from Booking_Table.
+ * Returns { updateCutoffDate, dailyStats, twoHourSlotStats } where
+ * twoHourSlotStats always contains the full 12 slots (missing ones => avgLoad 0).
+ * Shared by /api/usage-heatmap-stats and /api/off-peak-recommendation.
+ */
+async function computeHeatmapStats() {
+  const sundayInfo = getLastSundayDeadline();
+  const cutoffTime = sundayInfo.cutoffTimeObj;
+  const cutoffDateStr = sundayInfo.cutoffDateStr;
+
+  // Query the database for all booking records up to the cutoff time
+  const { data: allHistoryRecords, error: dbErr } = await supabase
+    .from("Booking_Table")
+    .select("created_at")
+    .lte("created_at", cutoffTime.toISOString());
+
+  if (dbErr) throw new Error("DB error: " + dbErr.message);
+
+  // Process the records to calculate daily and two-hour slot statistics
+  let dailyStatsResult = [];
+  let slotStatsResult = [];
+  try {
+    const allTimeList = allHistoryRecords.map(item => new Date(item.created_at));
+    const uniqueDaySet = new Set();
+
+    const weekdayCountMap = {};
+    const slotCountMap = {};
+
+    allTimeList.forEach(singleTime => {
+      // Count weekday
+      const wd = getWeekdayName(singleTime);
+      weekdayCountMap[wd] = (weekdayCountMap[wd] || 0) + 1;
+
+      // Align hour to EVEN start (0,2,4...22), eliminate overlapping slots
+      const rawHour = singleTime.getHours();
+      const slotStartHour = Math.floor(rawHour / 2) * 2;
+      const slotText = getTwoHourSlot(slotStartHour);
+      slotCountMap[slotText] = (slotCountMap[slotText] || 0) + 1;
+
+      // Count unique days
+      const dayKey = singleTime.toISOString().split("T")[0];
+      uniqueDaySet.add(dayKey);
+    });
+
+    const totalStatDays = uniqueDaySet.size || 1;
+    const minCreateDate = allTimeList.length ? new Date(Math.min(...allTimeList)) : new Date();
+    const maxCreateDate = allTimeList.length ? new Date(Math.max(...allTimeList)) : new Date();
+    const msPerWeek = 7 * 24 * 60 * 60 * 1000;
+    const totalCoverWeeks = Math.max(1, (maxCreateDate - minCreateDate) / msPerWeek);
+
+    // Daily average calculation
+    dailyStatsResult = Object.entries(weekdayCountMap).map(([weekDay, totalCount]) => ({
+      weekDay,
+      avgLoad: Number((totalCount / totalCoverWeeks).toFixed(2))
+    }));
+
+    // Force fill all 12 slots, missing ones set count = 0
+    slotStatsResult = fullTwoHourSlots.map(timeRange => {
+      const totalCount = slotCountMap[timeRange] ?? 0;
+      return {
+        timeRange,
+        avgLoad: Number((totalCount / totalStatDays).toFixed(2))
+      };
+    });
+  } catch (calcErr) {
+    console.warn("Failed to calculate statistics", calcErr);
+    dailyStatsResult = [];
+    // Still return full 12 slots even when calculation fails
+    slotStatsResult = fullTwoHourSlots.map(timeRange => ({
+      timeRange,
+      avgLoad: 0
+    }));
+  }
+
+  return {
+    updateCutoffDate: cutoffDateStr,
+    dailyStats: dailyStatsResult,
+    twoHourSlotStats: slotStatsResult
+  };
+}
+
+/**
+ * Return heatmap stats, honouring the weekly cache (refreshed every Monday 00:00).
+ * Recomputes and repopulates the cache when it is empty or expired.
+ */
+async function getCachedHeatmapStats() {
+  const currentTime = new Date();
+  if (heatmapCache.data && heatmapCache.refreshDeadline && currentTime < new Date(heatmapCache.refreshDeadline)) {
+    return heatmapCache.data;
+  }
+  const finalResponse = await computeHeatmapStats();
+  heatmapCache = {
+    data: finalResponse,
+    refreshDeadline: getNextMondayMidnight(),
+    statEndSundayStr: finalResponse.updateCutoffDate
+  };
+  return finalResponse;
+}
+
 app.get("/api/usage-heatmap-stats", async (req, res) => {
   try {
-    const currentTime = new Date();
-    // Check if cached data is still valid
-    if (heatmapCache.data && heatmapCache.refreshDeadline && currentTime < new Date(heatmapCache.refreshDeadline)) {
-      return res.json(heatmapCache.data);
-    }
-
-    // If cache is expired or not present, recalculate the stats
-    const sundayInfo = getLastSundayDeadline();
-    const cutoffTime = sundayInfo.cutoffTimeObj;
-    const cutoffDateStr = sundayInfo.cutoffDateStr;
-
-    // Query the database for all booking records up to the cutoff time
-    const { data: allHistoryRecords, error: dbErr } = await supabase
-      .from("Booking_Table")
-      .select("created_at")
-      .lte("created_at", cutoffTime.toISOString());
-
-    if (dbErr) throw new Error("DB error: " + dbErr.message);
-
-    // Process the records to calculate daily and two-hour slot statistics
-    let dailyStatsResult = [];
-    let slotStatsResult = [];
-    try {
-      const allTimeList = allHistoryRecords.map(item => new Date(item.created_at));
-      const uniqueDaySet = new Set();
-
-      const weekdayCountMap = {};
-      const slotCountMap = {};
-
-      allTimeList.forEach(singleTime => {
-        // Count weekday
-        const wd = getWeekdayName(singleTime);
-        weekdayCountMap[wd] = (weekdayCountMap[wd] || 0) + 1;
-
-        // Align hour to EVEN start (0,2,4...22), eliminate overlapping slots
-        const rawHour = singleTime.getHours();
-        const slotStartHour = Math.floor(rawHour / 2) * 2;
-        const slotText = getTwoHourSlot(slotStartHour);
-        slotCountMap[slotText] = (slotCountMap[slotText] || 0) + 1;
-
-        // Count unique days
-        const dayKey = singleTime.toISOString().split("T")[0];
-        uniqueDaySet.add(dayKey);
-      });
-
-      const totalStatDays = uniqueDaySet.size || 1;
-      const minCreateDate = allTimeList.length ? new Date(Math.min(...allTimeList)) : new Date();
-      const maxCreateDate = allTimeList.length ? new Date(Math.max(...allTimeList)) : new Date();
-      const msPerWeek = 7 * 24 * 60 * 60 * 1000;
-      const totalCoverWeeks = Math.max(1, (maxCreateDate - minCreateDate) / msPerWeek);
-
-      // Daily average calculation
-      dailyStatsResult = Object.entries(weekdayCountMap).map(([weekDay, totalCount]) => ({
-        weekDay,
-        avgLoad: Number((totalCount / totalCoverWeeks).toFixed(2))
-      }));
-
-      // Force fill all 12 slots, missing ones set count = 0
-      slotStatsResult = fullTwoHourSlots.map(timeRange => {
-        const totalCount = slotCountMap[timeRange] ?? 0;
-        return {
-          timeRange,
-          avgLoad: Number((totalCount / totalStatDays).toFixed(2))
-        };
-      });
-    } catch (calcErr) {
-      console.warn("Failed to calculate statistics", calcErr);
-      dailyStatsResult = [];
-      // Still return full 12 slots even when calculation fails
-      slotStatsResult = fullTwoHourSlots.map(timeRange => ({
-        timeRange,
-        avgLoad: 0
-      }));
-    }
-
-    // Cache the results and return them
-    const finalResponse = {
-      updateCutoffDate: cutoffDateStr,
-      dailyStats: dailyStatsResult,
-      twoHourSlotStats: slotStatsResult
-    };
-    heatmapCache = {
-      data: finalResponse,
-      refreshDeadline: getNextMondayMidnight(),
-      statEndSundayStr: cutoffDateStr
-    };
+    const finalResponse = await getCachedHeatmapStats();
     return res.status(200).json(finalResponse);
-
   } catch (serverErr) {
     console.error("Failed to process request:", serverErr);
     const fallbackDate = getLastSundayDeadline().cutoffDateStr;
