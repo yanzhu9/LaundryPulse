@@ -142,37 +142,9 @@ class _MyHomePageState extends State<MyHomePage> {
     return Scaffold(
       // For the head part of the app
       appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(
-            //Icons.build,
-            Icons.report,
-            color: Colors.grey,
-          ),
-          onPressed: () { 
-            Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const FaultReportPage()),
-            );
-          },
-        ),
-        
         backgroundColor: const Color.fromARGB(255, 215, 230, 243),
         centerTitle: true,
         title: Text(pageTitles[currentIndex]),
-        
-        actions: [IconButton(
-          icon: const Icon(
-            Icons.settings,
-            color: Colors.grey,
-          ),
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(builder: (context) => const SettingPage()),
-            );
-          },
-        ),
-      ],
       ),
       
       body: pageBody[currentIndex],
@@ -208,31 +180,167 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 }
 
-class FaultReportPage extends StatelessWidget {
+class FaultReportPage extends StatefulWidget {
   const FaultReportPage({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor:  const Color.fromARGB(255, 215, 230, 243),
-        centerTitle: true,
-        title: const Text('Fault Report'),
-      ),
-    );
-  }
+  State<FaultReportPage> createState() => _FaultReportPageState();
 }
 
-class SettingPage extends StatelessWidget {
-  const SettingPage({super.key});
+class _FaultReportPageState extends State<FaultReportPage> {
+  //three controllers for the three input fields
+  final TextEditingController machineTypeCtrl = TextEditingController();
+  final TextEditingController machineNoCtrl = TextEditingController();
+  final TextEditingController faultDescCtrl = TextEditingController();
+
+  // Dispose controllers to avoid memory leaks
+  @override
+  void dispose() {
+    machineTypeCtrl.dispose();
+    machineNoCtrl.dispose();
+    faultDescCtrl.dispose();
+    super.dispose();
+  }
+
+  // confirmation dialog before submitting the fault report
+  void openConfirmDialog() {
+  showDialog(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text("Submit Fault Report?"),
+      actions: [
+        // if user clicks Yes, close the dialog and call handleSubmitSuccess()
+        ElevatedButton(
+          onPressed: () {
+            Navigator.pop(dialogContext);
+            handleSubmitSuccess();
+          },
+          child: const Text("Yes"),
+        ),
+        // if user clicks No, just close the dialog and show a cancellation SnackBar
+        TextButton(
+          onPressed: () {
+            Navigator.pop(dialogContext);
+            // show a cancellation SnackBar
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text("Fault report submission cancelled"),
+                backgroundColor: Colors.grey,
+                duration: Duration(seconds: 1),
+              ),
+            );
+          },
+          child: const Text("No"),
+        ),
+      ],
+    ),
+  );
+}
+
+  // if the user confirms submission, this function will be called to handle the backend logic (currently only commented) and provide UI feedback
+  void handleSubmitSuccess() {
+    // ====================== Backend Logic ======================
+    /*
+    Backend needs to complete the following operations:
+    1. Create a new FaultReportRecord and save it to the database, recording the user, machine, fault description, and timestamp
+    2. Update the corresponding machine table, changing the machine status to out_of_service
+    3. Query all administrator users with role=admin, and push FCM fault alerts in bulk
+    */
+    // ===================================================================
+
+    // UI feedback
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Fault report submitted successfully!"),
+        backgroundColor: Colors.green,
+        duration: Duration(seconds: 2),
+      ),
+    );
+    // clear the input fields
+    machineTypeCtrl.clear();
+    machineNoCtrl.clear();
+    faultDescCtrl.clear();
+    // navigate back to the previous page (HomePage)
+    if (mounted) Navigator.pop(context);
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor:  const Color.fromARGB(255, 215, 230, 243),
+        backgroundColor: const Color.fromARGB(255, 215, 230, 243),
         centerTitle: true,
-        title: const Text('Settings'),
+        title: const Text('Fault Report'),
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 1. Facility type input area
+            const Text(
+              "Facility Type",
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: machineTypeCtrl,
+              decoration: const InputDecoration(
+                hintText: "Example: Washer / Dryer / Locker",
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              ),
+            ),
+            const SizedBox(height: 22),
+
+            // 2. Facility Number input area
+            const Text(
+              "Facility Number",
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: machineNoCtrl,
+              decoration: const InputDecoration(
+                hintText: "Example: W-02 / D-05",
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              ),
+            ),
+            const SizedBox(height: 22),
+
+            // 3. Facility Description (Multi-line input)
+            const Text(
+              "Facility Description (Please describe in detail)",
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: faultDescCtrl,
+              maxLines: 4,
+              minLines: 4,
+              decoration: const InputDecoration(
+                hintText: "Describe the specific malfunction of the facility...",
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+            ),
+            const SizedBox(height: 40),
+
+            // 4. Submit button
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: openConfirmDialog,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  textStyle: const TextStyle(fontSize: 16),
+                ),
+                child: const Text("Submit Fault Report"),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -988,6 +1096,36 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
 
+  Widget buildFaultReportEntry() {
+  return InkWell(
+    onTap: () {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (context) => const FaultReportPage()),
+      );
+    },
+    child: Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 14),
+      margin: const EdgeInsets.only(top: 16),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: const [
+          Text(
+            "Fault Report",
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+          ),
+          Icon(Icons.chevron_right, color: Colors.grey),
+        ],
+      ),
+    ),
+  );
+}
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -1063,6 +1201,7 @@ class _ProfilePageState extends State<ProfilePage> {
                     // New review entry at the bottom of original UI
                     buildReviewEntry(),
                     buildAnalyticsEntry(),
+                    buildFaultReportEntry(),
                   ],
                 ),
               ),
