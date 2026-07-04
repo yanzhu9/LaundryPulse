@@ -356,6 +356,7 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   List<LaundryMachine> machines = [];
   Timer? timer;
+  Map<String, dynamic>? offPeak; // off-peak recommendation payload (null = loading)
 
 @override
 void initState() {
@@ -364,9 +365,28 @@ void initState() {
     await fetchRealMachineData();
   }();
 
+  // Off-peak data only changes weekly, so fetch it once (not on the 5s timer).
+  fetchOffPeak();
+
   timer = Timer.periodic(const Duration(seconds: 5), (timer) async {
     await fetchRealMachineData();
   });
+}
+
+// Fetch the weekly off-peak recommendation for the current user.
+Future<void> fetchOffPeak() async {
+  if (current_user_id == null || current_user_id!.isEmpty) return;
+  try {
+    final res = await http.get(Uri.parse(
+      "https://laundrypulse-gf1v.onrender.com/api/off-peak-recommendation?user_id=$current_user_id"));
+    if (res.statusCode == 200 && mounted) {
+      setState(() {
+        offPeak = jsonDecode(res.body) as Map<String, dynamic>;
+      });
+    }
+  } catch (_) {
+    // Silent: the card just stays in its loading/empty state on failure.
+  }
 }
 
 //close the timer if leaving the page
@@ -483,12 +503,102 @@ void dispose() {
     );
   }
 
+  // Weekly off-peak recommendation card shown at the top of the home page.
+  Widget _buildOffPeakCard() {
+    // Still loading: render nothing to avoid layout flashing.
+    if (offPeak == null) return const SizedBox.shrink();
+
+    final List recs = (offPeak!["recommendations"] as List?) ?? [];
+    final Map? next = offPeak!["nextOffPeak"] as Map?;
+    final bool personalized = offPeak!["personalized"] == true;
+
+    // No booking data yet -> gentle placeholder instead of an empty card.
+    if (recs.isEmpty || next == null) {
+      return Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 16),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: const Color.fromARGB(255, 215, 230, 243),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Text(
+          "Off-peak suggestions will appear once more usage data is collected.",
+          style: TextStyle(fontSize: 13, color: Colors.black54),
+        ),
+      );
+    }
+
+    final others = recs
+        .where((r) => r["timeRange"] != next["timeRange"])
+        .map((r) => r["timeRange"] as String)
+        .toList();
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color.fromARGB(255, 215, 230, 243),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.schedule, size: 18, color: Colors.black87),
+              const SizedBox(width: 6),
+              Text(
+                personalized
+                    ? "Recommended laundry time for you"
+                    : "Off-peak times in your hostel",
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            next["timeRange"] as String,
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+          ),
+          Text(
+            "Avg only ${next["avgLoad"]} machines in use",
+            style: const TextStyle(fontSize: 13, color: Colors.black54),
+          ),
+          if (others.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              "Also quiet: ${others.join('  ·  ')}",
+              style: const TextStyle(fontSize: 12, color: Colors.black54),
+            ),
+          ],
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const HeatMapPage()),
+                );
+              },
+              child: const Text("View full heatmap →"),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
       color: Colors.white,
-      child: Column(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
         children: [
+          _buildOffPeakCard(),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
@@ -548,6 +658,7 @@ void dispose() {
                 },
               ),
         ],
+      ),
       ),
     );
   }
