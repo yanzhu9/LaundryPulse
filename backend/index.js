@@ -1507,6 +1507,103 @@ app.get('/api/user-preference', async (req, res) => {
   }
 });
 
+// GET /api/off-peak-recommendation?user_id=xxx
+// Recommends low-occupancy 2-hour slots for doing laundry.
+// Blends the hostel-wide heatmap (global load) with the user's own past
+// laundry hours (personal schedule) so the picks are both quiet and realistic.
+const OFFPEAK_LOAD_WEIGHT = 0.7;  // how much "how empty the slot is" matters
+const OFFPEAK_PREF_WEIGHT = 0.3;  // how much "matches the user's usual hours" matters
+const OFFPEAK_TOP_N = 3;
+
+app.get('/api/off-peak-recommendation', async (req, res) => {
+  try {
+    const { user_id } = req.query;
+
+    // 1. Global load per 2-hour slot (reuses the weekly-cached heatmap).
+    const heatmap = await getCachedHeatmapStats();
+    const slots = heatmap.twoHourSlotStats; // [{ timeRange, avgLoad }], always 12 entries
+
+    const totalLoad = slots.reduce((sum, s) => sum + s.avgLoad, 0);
+    if (totalLoad <= 0) {
+      // No booking data yet -> nothing meaningful to recommend.
+      return res.json({
+        success: true,
+        personalized: false,
+        updateCutoffDate: heatmap.updateCutoffDate,
+        nextOffPeak: null,
+        recommendations: []
+      });
+    }
+
+    const maxLoad = Math.max(...slots.map(s => s.avgLoad)) || 1;
+    const normLoad = slots.map(s => s.avgLoad / maxLoad); // 0..1, higher = busier
+
+    // 2. Personal schedule: fold the user's 24-hour usage into the 12 slots.
+    let personalized = false;
+    let prefMatch = slots.map(() => 0);
+    if (user_id) {
+      const { data: logs, error } = await supabase
+        .from("Usage_Log_Table")
+        .select("hour")
+        .eq("user_id", user_id);
+
+      if (!error && logs && logs.length > 0) {
+        const slotPref = slots.map(() => 0);
+        logs.forEach(l => {
+          if (l.hour == null) return;
+          const k = Math.floor(l.hour / 2); // 0..11, aligns with fullTwoHourSlots
+          if (k >= 0 && k < slotPref.length) slotPref[k]++;
+        });
+        const maxPref = Math.max(...slotPref) || 1;
+        prefMatch = slotPref.map(v => v / maxPref); // 0..1, higher = more usual for user
+        personalized = true;
+      }
+    }
+
+    // 3. Score each slot: prefer empty slots, break ties toward the user's habits.
+    const scored = slots.map((s, i) => ({
+      timeRange: s.timeRange,
+      avgLoad: s.avgLoad,
+      score: Number((
+        OFFPEAK_LOAD_WEIGHT * (1 - normLoad[i]) +
+        OFFPEAK_PREF_WEIGHT * prefMatch[i]
+      ).toFixed(4))
+    }));
+
+    // 4. Top-N recommendations by score (ties: quieter slot first).
+    const recommendations = [...scored]
+      .sort((a, b) => b.score - a.score || a.avgLoad - b.avgLoad)
+      .slice(0, OFFPEAK_TOP_N);
+
+    // 5. "Next off-peak": first recommended slot starting at/after the current
+    //    hour today; wrap to the earliest recommended slot if none remain today.
+    const recSet = new Set(recommendations.map(r => r.timeRange));
+    const currentHour = new Date().getHours();
+    const currentSlotStart = Math.floor(currentHour / 2) * 2;
+    const upcoming = slots.filter(s =>
+      recSet.has(s.timeRange) &&
+      parseInt(s.timeRange.slice(0, 2), 10) >= currentSlotStart
+    );
+    const orderedRecs = [...recommendations].sort(
+      (a, b) => parseInt(a.timeRange.slice(0, 2), 10) - parseInt(b.timeRange.slice(0, 2), 10)
+    );
+    const nextOffPeak = (upcoming.length ? upcoming[0] : orderedRecs[0]) || null;
+
+    return res.json({
+      success: true,
+      personalized,
+      updateCutoffDate: heatmap.updateCutoffDate,
+      nextOffPeak: nextOffPeak
+        ? { timeRange: nextOffPeak.timeRange, avgLoad: nextOffPeak.avgLoad }
+        : null,
+      recommendations
+    });
+  } catch (err) {
+    console.error("off-peak recommendation failed:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // test endpoint to verify backend and database connection
 app.get('/', (req, res) => {
   res.send('Backend deployed successfully! Connected to Supabase database.');
