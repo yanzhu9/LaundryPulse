@@ -238,15 +238,86 @@ class _FaultReportPageState extends State<FaultReportPage> {
 }
 
   // if the user confirms submission, this function will be called to handle the backend logic (currently only commented) and provide UI feedback
-  void handleSubmitSuccess() {
-    // ====================== Backend Logic ======================
-    /*
-    Backend needs to complete the following operations:
-    1. Create a new FaultReportRecord and save it to the database, recording the user, machine, fault description, and timestamp
-    2. Update the corresponding machine table, changing the machine status to out_of_service
-    3. Query all administrator users with role=admin, and push FCM fault alerts in bulk
-    */
-    // ===================================================================
+  void handleSubmitSuccess() async {
+  // 
+  final String facilityType = machineTypeCtrl.text.trim();
+  final String facilityNumber = machineNoCtrl.text.trim();
+  final String faultDesc = faultDescCtrl.text.trim();
+
+  // check if any of the input fields are empty
+  if (facilityType.isEmpty || facilityNumber.isEmpty || faultDesc.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("All input fields cannot be empty"),
+        backgroundColor: Colors.red,
+        duration: Duration(seconds: 2),
+      ),
+    );
+    return;
+  }
+
+  // get the logged-in user ID
+  final String? submitUserId = current_user_id;
+  if (submitUserId == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Please log in before submitting a fault report"),
+        backgroundColor: Colors.red,
+        duration: Duration(seconds: 2),
+      ),
+    );
+    return;
+  }
+
+  final String apiUrl = "https://laundrypulse.onrender.com/api/create-fault-report";
+
+  try {
+    final Map<String, dynamic> requestBody = {
+      "facilityType": facilityType,
+      "facilityNumber": facilityNumber,
+      "faultDesc": faultDesc,
+      "submitUserId": submitUserId,
+    };
+
+    final Map<String, String> headers = {
+      "Content-Type": "application/json; charset=utf-8",
+    };
+
+    final http.Response response = await http.post(
+      Uri.parse(apiUrl),
+      headers: headers,
+      body: jsonEncode(requestBody),
+    );
+
+    final Map<String, dynamic> resData = jsonDecode(response.body);
+
+    if (resData["success"] == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Fault report submitted successfully!"),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      machineTypeCtrl.clear();
+      machineNoCtrl.clear();
+      faultDescCtrl.clear();
+      if (mounted) Navigator.pop(context);
+    } else {
+      throw resData["msg"] ?? "Submit failed";
+    }
+  } catch (err){
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Submit failed: ${err.toString()}"),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+}
 
     // UI feedback
     ScaffoldMessenger.of(context).showSnackBar(
