@@ -319,22 +319,6 @@ class _FaultReportPageState extends State<FaultReportPage> {
   }
 }
 
-    // UI feedback
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text("Fault report submitted successfully!"),
-        backgroundColor: Colors.green,
-        duration: Duration(seconds: 2),
-      ),
-    );
-    // clear the input fields
-    machineTypeCtrl.clear();
-    machineNoCtrl.clear();
-    faultDescCtrl.clear();
-    // navigate back to the previous page (HomePage)
-    if (mounted) Navigator.pop(context);
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
