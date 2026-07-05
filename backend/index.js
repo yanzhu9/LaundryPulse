@@ -1663,18 +1663,23 @@ app.post("/api/create-fault-report", async (req, res) => {
     const adminTokens = adminList.map(item => item.fcm_token);
 
     if (adminInitialized && adminTokens.length > 0) {
-      await admin.messaging().sendMulticast({
-        tokens: adminTokens,
-        notification: {
-          title: "Equipment Fault Alert",
-          body: `[${facilityType} ${facilityNumber}] Fault: ${faultDesc.slice(0,70)}`
-        },
-        data: {
-          targetPage: "adminFaultList",
-          facilityNumber: facilityNumber
-        }
-      });
-    }
+    for (const token of adminTokens) {
+    await admin.messaging().send({
+      token: token,
+      notification: {
+        title: "Equipment Fault Alert",
+        body: `[${facilityType} ${facilityNumber}] Fault: ${faultDesc.slice(0,70)}`
+      },
+      data: {
+        targetPage: "adminFaultList",
+        facilityNumber: facilityNumber
+      },
+      android: {
+        priority: "high"
+      }
+    });
+  }
+}
 
     return res.json({
       success: true,
