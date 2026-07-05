@@ -6,14 +6,17 @@ const admin = require('firebase-admin');
 
 let adminInitialized = false;
 try {
-  const serviceAccount = require('/etc/secrets/serviceAccountKey.json');
+  const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (!rawJson) throw new Error("FIREBASE_SERVICE_ACCOUNT env variable empty");
+  const serviceAccount = JSON.parse(rawJson);
+
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
   });
   adminInitialized = true;
   console.log('[FCM] Firebase Admin initialized successfully');
 } catch (e) {
-  console.warn('[FCM] serviceAccountKey.json not found, push notifications disabled');
+  console.warn('[FCM] serviceAccount load failed, push notifications disabled. Reason:', e.message);
 }
 
 const app = express();
