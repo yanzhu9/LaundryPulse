@@ -1604,6 +1604,74 @@ app.get('/api/off-peak-recommendation', async (req, res) => {
   }
 });
 
+// POST /api/create-fault-report
+app.post("/api/create-fault-report", async (req, res) => {
+  try {
+    const { facilityType, facilityNumber, faultDesc, submitUserId } = req.body;
+
+    // 1. Validate required fields
+    if (!facilityType || !facilityNumber || !faultDesc || !submitUserId) {
+      return res.json({
+        success: false,
+        msg: "All facility and fault fields cannot be empty"
+      });
+    }
+
+    // 2. First step: Insert fault report into Fault_Report_Table
+    const { error: insertErr } = await supabase
+      .from("Fault_Report_Table")
+      .insert({
+        reporter_user_id: submitUserId,
+        facility_type: facilityType,
+        facility_number: facilityNumber,
+        fault_description: faultDesc,
+        report_status: "pending",
+        reported_at: new Date()
+      });
+    if (insertErr) throw new Error("Insert report failed: " + insertErr.message);
+
+    // 3. Second step: Update Machine_Table status to outOfService based on facility number
+    const { error: updateMachineErr } = await supabase
+      .from("Machine_Table")
+      .update({ status: "outOfService" })
+      .eq("facility_number", facilityNumber);
+    if (updateMachineErr) throw new Error("Update machine status failed: " + updateMachineErr.message);
+
+    // 4. Push admin FCM notifications 
+    const { data: adminList, error: adminErr } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .eq("role", "admin")
+      .not("fcm_token", "is", null);
+    if (adminErr) throw new Error(adminErr.message);
+    const adminTokens = adminList.map(item => item.fcm_token);
+
+    if (adminInitialized && adminTokens.length > 0) {
+      await admin.messaging().sendMulticast({
+        tokens: adminTokens,
+        notification: {
+          title: "Equipment Fault Alert",
+          body: `[${facilityType} ${facilityNumber}] Fault: ${faultDesc.slice(0,70)}`
+        },
+        data: {
+          targetPage: "adminFaultList",
+          facilityNumber: facilityNumber
+        }
+      });
+    }
+
+    return res.json({
+      success: true,
+      msg: "Fault report created, machine marked out of service"
+    });
+  } catch (err) {
+    return res.json({
+      success: false,
+      msg: err.message
+    });
+  }
+});
+
 // test endpoint to verify backend and database connection
 app.get('/', (req, res) => {
   res.send('Backend deployed successfully! Connected to Supabase database.');
