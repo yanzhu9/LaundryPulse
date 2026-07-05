@@ -634,7 +634,18 @@ void dispose() {
               onPressed: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const HeatMapPage()),
+                  MaterialPageRoute(
+                    // HeatMapPage has no AppBar of its own (it normally lives
+                    // inside the tab scaffold), so wrap it to get a back button.
+                    builder: (context) => Scaffold(
+                      appBar: AppBar(
+                        backgroundColor: const Color.fromARGB(255, 215, 230, 243),
+                        centerTitle: true,
+                        title: const Text("HeatMap"),
+                      ),
+                      body: const HeatMapPage(),
+                    ),
+                  ),
                 );
               },
               child: const Text("View full heatmap →"),
