@@ -1630,12 +1630,25 @@ app.post("/api/create-fault-report", async (req, res) => {
       });
     if (insertErr) throw new Error("Insert report failed: " + insertErr.message);
 
-    // 3. Second step: Update Machine_Table status to outOfService based on facility number
-    const { error: updateMachineErr } = await supabase
-      .from("Machine_Table")
-      .update({ status: "outOfService" })
-      .eq("facility_number", facilityNumber);
-    if (updateMachineErr) throw new Error("Update machine status failed: " + updateMachineErr.message);
+    // 3. Update the facility's status to "outOfService" in the corresponding table
+    let updateErr = null;
+    if (facilityType === "Washer" || facilityType === "Dryer") {
+      const { error } = await supabase
+        .from("Machine_Table")
+        .update({ machine_status: "outOfService" })
+        .eq("machine_id", facilityNumber);
+      updateErr = error;
+    } else if (facilityType === "Locker") {
+      const { error } = await supabase
+        .from("Locker_Table")
+        .update({ locker_status: "outOfService" })
+        .eq("locker_id", facilityNumber);
+      updateErr = error;
+    } else {
+      throw new Error("Only Washer, Dryer, Locker are supported");
+    }
+
+    if (updateErr) throw new Error("Update device status failed: " + updateErr.message);
 
     // 4. Push admin FCM notifications 
     const { data: adminList, error: adminErr } = await supabase
