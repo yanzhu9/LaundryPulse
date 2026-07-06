@@ -1346,10 +1346,56 @@ async function computeHeatmapStats() {
     }));
   }
 
+  let machineUtilStatsResult = [
+    { machineType: "washer", utilRate: 0 },
+    { machineType: "dryer", utilRate: 0 }
+  ];
+  try {
+    // Query Usage_Log_Table for all records up to the cutoff time
+    const { data: usageLogRecords, error: usageLogErr } = await supabase
+      .from("Usage_Log_Table")
+      .select("machine_type, mod_min")
+      .lte("created_at", cutoffTime.toISOString());
+
+    if (usageLogErr) throw new Error("Usage_Log_Table query fail: " + usageLogErr.message);
+
+    let totalWasherMins = 0;
+    let totalDryerMins = 0;
+    // Sum the total minutes for each machine type
+    usageLogRecords.forEach(logItem => {
+      const singleMin = Number(logItem.mod_min ?? 0);
+      if (logItem.machine_type === "washer") {
+        totalWasherMins += singleMin;
+      } else if (logItem.machine_type === "dryer") {
+        totalDryerMins += singleMin;
+      }
+    });
+
+    // Calculate utilization percentages
+    const totalAllMins = totalWasherMins + totalDryerMins;
+    let washerPercent = 0;
+    let dryerPercent = 0;
+    if (totalAllMins > 0) {
+      washerPercent = Number(((totalWasherMins / totalAllMins) * 100).toFixed(1));
+      dryerPercent = Number(((totalDryerMins / totalAllMins) * 100).toFixed(1));
+    }
+    machineUtilStatsResult = [
+      { machineType: "washer", utilRate: washerPercent },
+      { machineType: "dryer", utilRate: dryerPercent }
+    ];
+  } catch (usageErr) {
+    console.error("Machine usage minute calculate error: ", usageErr);
+    machineUtilStatsResult = [
+      { machineType: "washer", utilRate: 0 },
+      { machineType: "dryer", utilRate: 0 }
+    ];
+  }
+  
   return {
     updateCutoffDate: cutoffDateStr,
     dailyStats: dailyStatsResult,
-    twoHourSlotStats: slotStatsResult
+    twoHourSlotStats: slotStatsResult,
+    machineUtilStats: machineUtilStatsResult
   };
 }
 
@@ -1385,7 +1431,11 @@ app.get("/api/usage-heatmap-stats", async (req, res) => {
       twoHourSlotStats: fullTwoHourSlots.map(timeRange => ({
         timeRange,
         avgLoad: 0
-      }))
+      })),
+      machineUtilStats: [
+        { machineType: "washer", utilRate: 0 },
+        { machineType: "dryer", utilRate: 0 }
+      ]
     });
   }
 });
