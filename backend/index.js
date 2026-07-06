@@ -1812,24 +1812,33 @@ app.post("/api/mark-fault-fixed", async (req, res) => {
     }
 
     // Step 3: Get all user FCM tokens and send multicast notifications
+    const runFcmPush = async () => {
+    try {
     const { data: userList, error: userErr } = await supabase
       .from("User_Table")
       .select("fcm_token")
       .not("fcm_token", "is", null)
       .eq("role", "user");
     if (userErr) throw userErr;
-
-    const tokens = userList.map(u => u.fcm_token).filter(t => t);
-    if (tokens.length > 0) {
-      await fcm.sendMulticast({
-        tokens: tokens,
-        notification: {
-          title: "Facility Fixed",
-          body: `The ${facility_type} No.${facility_number} fault has been fixed, you can use it normally now.`
-        }
-      });
+    const validTokens = userList.map(i => i.fcm_token).filter(t => t && t.trim());
+    for (const token of validTokens) {
+      try {
+        await fcm.send({
+          token: token,
+          notification: {
+            title: "Facility Fixed",
+            body: `The ${facility_type} No.${facility_number} fault has been fixed, you can use it normally now.`
+          }
+        });
+      } catch (e) {
+        console.warn(`FCM single token fail: ${token}`, e.message);
+      }
     }
-
+  } catch (e) {
+    console.error("FCM background push error:", e.message);
+    }
+  };
+    runFcmPush();
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("Mark fixed fault error: ", err);
