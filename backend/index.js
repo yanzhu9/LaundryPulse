@@ -209,7 +209,7 @@ app.get('/machines', async (req, res) => {
   res.send(data);
 });
 
-app.get('/api/admin/lockers', authenticateAdmin, async (req, res) => {
+app.get('/api/admin/lockers', async (req, res) => {
   const { data, error } = await supabase
     .from('Locker_Table')
     .select('locker_id, locker_status')
