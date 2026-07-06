@@ -1354,7 +1354,7 @@ async function computeHeatmapStats() {
     // Query Usage_Log_Table for all records up to the cutoff time
     const { data: usageLogRecords, error: usageLogErr } = await supabase
       .from("Usage_Log_Table")
-      .select("machine_type, mod_min")
+      .select("machine_type, mode_min")
       .lte("created_at", cutoffTime.toISOString());
 
     if (usageLogErr) throw new Error("Usage_Log_Table query fail: " + usageLogErr.message);
