@@ -1756,6 +1756,87 @@ app.post("/api/create-fault-report", async (req, res) => {
   }
 });
 
+// GET /api/get-all-fault-list
+app.get("/api/get-all-fault-list", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("Fault_Report_Table")
+      .select("record_id, facility_type, facility_number, fault_description, reported_at, report_status")
+      .eq("report_status", "pending")
+      .order("reported_at", { ascending: false });
+
+    if (error) throw error;
+
+    return res.status(200).json({
+      success: true,
+      fault_list: data
+    });
+  } catch (err) {
+    console.error("Get fault list error: ", err);
+    return res.status(200).json({
+      success: false,
+      fault_list: []
+    });
+  }
+});
+
+// POST /api/mark-fault-fixed
+app.post("/api/mark-fault-fixed", async (req, res) => {
+  try {
+    const { record_id, facility_type, facility_number } = req.body;
+    if (!record_id || !facility_type || !facility_number) {
+      return res.status(200).json({ success: false, msg: "Missing required params" });
+    }
+
+    // Step 1: Update the fault report status to "fixed"
+    const { error: updateFaultErr } = await supabase
+      .from("Fault_Report_Table")
+      .update({ report_status: "fixed" })
+      .eq("record_id", record_id);
+    if (updateFaultErr) throw updateFaultErr;
+
+    // Step 2: Update the facility status to "available" in the corresponding table
+    if (facility_type === "washer" || facility_type === "dryer") {
+      const { error: machineErr } = await supabase
+        .from("Machine_Table")
+        .update({ machine_status: "available" })
+        .eq("machine_id", facility_number)
+        .eq("machine_type", facility_type);
+      if (machineErr) throw machineErr;
+    } else if (facility_type === "locker") {
+      const { error: lockerErr } = await supabase
+        .from("Locker_Table")
+        .update({ locker_status: "available" })
+        .eq("locker_id", facility_number);
+      if (lockerErr) throw lockerErr;
+    }
+
+    // Step 3: Get all user FCM tokens and send multicast notifications
+    const { data: userList, error: userErr } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .not("fcm_token", "is", null)
+      .eq("role", "user");
+    if (userErr) throw userErr;
+
+    const tokens = userList.map(u => u.fcm_token).filter(t => t);
+    if (tokens.length > 0) {
+      await fcm.sendMulticast({
+        tokens: tokens,
+        notification: {
+          title: "Facility Fixed",
+          body: `The ${facility_type} No.${facility_number} fault has been fixed, you can use it normally now.`
+        }
+      });
+    }
+
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("Mark fixed fault error: ", err);
+    return res.status(200).json({ success: false, msg: String(err) });
+  }
+});
+
 // test endpoint to verify backend and database connection
 app.get('/', (req, res) => {
   res.send('Backend deployed successfully! Connected to Supabase database.');
