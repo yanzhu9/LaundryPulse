@@ -1780,6 +1780,38 @@ app.get("/api/get-all-fault-list", async (req, res) => {
   }
 });
 
+// POST /api/send-all-user-notification
+async function sendAllUserNotification(title, body) {
+  if (!adminInitialized) return;
+  try {
+    const { data: userList, error } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .not("fcm_token", "is", null)
+      .eq("role", "user");
+
+    if (error || !userList || userList.length === 0) {
+      console.log("[FCM] No valid user list for broadcast");
+      return;
+    }
+
+    for (const user of userList) {
+      const token = user.fcm_token;
+      try {
+        await admin.messaging().send({
+          token: token,
+          notification: { title, body }
+        });
+        console.log(`[FCM Broadcast] Sent to token ${token.slice(0,20)}...`);
+      } catch (err) {
+        console.warn(`[FCM Broadcast Fail] token ${token.slice(0,20)}...`, err.message);
+      }
+    }
+  } catch (globalErr) {
+    console.error("[FCM Broadcast global error]", globalErr.message);
+  }
+}
+
 // POST /api/mark-fault-fixed
 app.post("/api/mark-fault-fixed", async (req, res) => {
   try {
@@ -1813,31 +1845,10 @@ app.post("/api/mark-fault-fixed", async (req, res) => {
 
     // Step 3: Get all user FCM tokens and send multicast notifications
     const runFcmPush = async () => {
-    try {
-    const { data: userList, error: userErr } = await supabase
-      .from("User_Table")
-      .select("fcm_token")
-      .not("fcm_token", "is", null)
-      .eq("role", "user");
-    if (userErr) throw userErr;
-    const validTokens = userList.map(i => i.fcm_token).filter(t => t && t.trim());
-    for (const token of validTokens) {
-      try {
-        await fcm.send({
-          token: token,
-          notification: {
-            title: "Facility Fixed",
-            body: `The ${facility_type} No.${facility_number} fault has been fixed, you can use it normally now.`
-          }
-        });
-      } catch (e) {
-        console.warn(`FCM single token fail: ${token}`, e.message);
-      }
-    }
-  } catch (e) {
-    console.error("FCM background push error:", e.message);
-    }
-  };
+      const pushTitle = "Facility Fixed";
+      const pushBody = `The ${facility_type} No.${facility_number} fault has been fixed, you can use it normally now.`;
+      await sendAllUserNotification(pushTitle, pushBody);
+    };
     runFcmPush();
     return res.status(200).json({ success: true });
   } catch (err) {
