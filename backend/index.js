@@ -209,6 +209,19 @@ app.get('/machines', async (req, res) => {
   res.send(data);
 });
 
+app.get('/api/admin/lockers', authenticateAdmin, async (req, res) => {
+  const { data, error } = await supabase
+    .from('Locker_Table')
+    .select('locker_id, locker_status')
+    .order('locker_id', { ascending: true });
+
+  if (error) {
+    console.error('Failed to fetch locker data:', error);
+    return res.status(500).json({ success: false, msg: 'Failed to fetch locker data' });
+  }
+  res.send(data);
+});
+
 app.post("/api/queue-book", async (req, res) => {
   try {
     const { user_id, type } = req.body;
