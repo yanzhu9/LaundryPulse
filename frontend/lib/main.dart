@@ -9,6 +9,7 @@ import 'pages/globals.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:intl/intl.dart';
+import 'pages/admin.dart';
 
 enum MachineStatus {
   available,
@@ -108,6 +109,8 @@ class _MyAppState extends State<MyApp> {
         '/register': (context) => const RegisterPage(),
         '/welcome':  (context) => const WelcomePage(),
         '/home':     (context) => const MyHomePage(),
+        '/admin':    (context) => const Admin(),
+        '/admin-setting': (context) => const AdminSettingPage(),
       },
     );
   }
@@ -244,13 +247,65 @@ class _FaultReportPageState extends State<FaultReportPage> {
   final String facilityNumber = machineNoCtrl.text.trim();
   final String faultDesc = faultDescCtrl.text.trim();
 
-  // check if any of the input fields are empty
+  // 1. check if any input field is empty
   if (facilityType.isEmpty || facilityNumber.isEmpty || faultDesc.isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text("All input fields cannot be empty"),
         backgroundColor: Colors.red,
         duration: Duration(seconds: 2),
+      ),
+    );
+    return;
+  }
+
+  // 2. check if the facility type is valid (washer, dryer, locker)
+  final List<String> allowTypeList = ["washer", "dryer", "locker"];
+  if (!allowTypeList.contains(facilityType)) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Facility Type only support lowercase: washer / dryer / locker"),
+        backgroundColor: Colors.red,
+        duration: Duration(seconds: 2),
+      ),
+    );
+    return;
+  }
+
+  bool formatPass = true;
+  String formatErrMsg = "";
+  RegExp washerReg = RegExp(r'^W-(0[1-6])$');
+  RegExp dryerReg = RegExp(r'^D-(0[1-6])$');
+  RegExp lockerReg = RegExp(r'^\d+$');
+
+  // 3. check if the facility number format is valid based on the facility type
+  switch(facilityType){
+    case "washer":
+      if (!washerReg.hasMatch(facilityNumber)) {
+        formatPass = false;
+        formatErrMsg = "Washer format must be W-01 ~ W-06 (capital W + hyphen + two digits 01~06)";
+      }
+      break;
+    case "dryer":
+      if (!dryerReg.hasMatch(facilityNumber)) {
+        formatPass = false;
+        formatErrMsg = "Dryer format must be D-01 ~ D-06 (capital D + hyphen + two digits 01~06)";
+      }
+      break;
+    case "locker":
+      if (!lockerReg.hasMatch(facilityNumber)) {
+        formatPass = false;
+        formatErrMsg = "Locker number only pure digits, no letters/hyphen";
+      }
+      break;
+  }
+
+  if (!formatPass) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(formatErrMsg),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 2),
       ),
     );
     return;
@@ -341,7 +396,7 @@ class _FaultReportPageState extends State<FaultReportPage> {
             TextField(
               controller: machineTypeCtrl,
               decoration: const InputDecoration(
-                hintText: "Example: Washer / Dryer / Locker",
+                hintText: "Example: washer / dryer / locker",
                 border: OutlineInputBorder(),
                 contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
               ),
