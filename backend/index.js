@@ -1200,7 +1200,20 @@ function getLastSundayDeadline() {
  * Get the next Monday at 00:00:00.000 as the refresh deadline for heatmap stats
  */
 function getNextMondayMidnight() {
-  return new Date();
+  try {
+    const now = new Date();
+    const day = now.getDay();
+    const addDays = day === 0 ? 1 : 8 - day;
+    const nextMon = new Date(now);
+    nextMon.setDate(now.getDate() + addDays);
+    nextMon.setHours(0, 0, 0, 0);
+    return nextMon;
+  } catch (err) {
+    // If any error occurs, fallback to 7 days from now
+    const fallback = new Date();
+    fallback.setDate(fallback.getDate() + 7);
+    return fallback;
+  }
 }
 
 /**
@@ -1336,19 +1349,13 @@ async function computeHeatmapStats() {
   let machineUtilStatsResult = [
     { machineType: "washer", utilRate: 0 },
     { machineType: "dryer", utilRate: 0 }
-];
-try {
-    // 查询Usage_Log_Table，字段mode_min
+  ];
+  try {
+    // Query Usage_Log_Table for all records up to the cutoff time
     const { data: usageLogRecords, error: usageLogErr } = await supabase
       .from("Usage_Log_Table")
-      .select("machine_type, mode_min, created_at") // 带上created_at方便校验时间
+      .select("machine_type, mode_min")
       .lte("created_at", cutoffTime.toISOString());
-
-    // 打印数据库返回原始信息
-    console.log("==== Usage_Log_Table 查询结果 ====");
-    console.log("查询错误：", usageLogErr);
-    console.log("返回记录条数：", usageLogRecords?.length ?? 0);
-    console.log("原始前3条记录示例：", usageLogRecords?.slice(0,3));
 
     if (usageLogErr) throw new Error("Usage_Log_Table query fail: " + usageLogErr.message);
 
@@ -1356,19 +1363,13 @@ try {
     let totalDryerMins = 0;
     // Sum the total minutes for each machine type
     usageLogRecords.forEach(logItem => {
-      const singleMin = Number(logItem.mode_min ?? 0);
-      const rawType = logItem.machine_type ?? "";
-      const type = rawType.toLowerCase().trim();
-      console.log("单条记录 | 设备类型:", rawType, "时长:", singleMin);
-
-      if (type === "washer") {
+      const singleMin = Number(logItem.mod_min ?? 0);
+      if (logItem.machine_type === "washer") {
         totalWasherMins += singleMin;
-      } else if (type === "dryer") {
+      } else if (logItem.machine_type === "dryer") {
         totalDryerMins += singleMin;
       }
     });
-
-    console.log("累加完成 | 洗衣机总时长:", totalWasherMins, "烘干机总时长:", totalDryerMins);
 
     // Calculate utilization percentages
     const totalAllMins = totalWasherMins + totalDryerMins;
@@ -1378,8 +1379,6 @@ try {
       washerPercent = Number(((totalWasherMins / totalAllMins) * 100).toFixed(1));
       dryerPercent = Number(((totalDryerMins / totalAllMins) * 100).toFixed(1));
     }
-    console.log("最终占比 | washer:", washerPercent, "% dryer:", dryerPercent, "%");
-
     machineUtilStatsResult = [
       { machineType: "washer", utilRate: washerPercent },
       { machineType: "dryer", utilRate: dryerPercent }
