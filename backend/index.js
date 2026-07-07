@@ -1857,6 +1857,150 @@ app.post("/api/mark-fault-fixed", async (req, res) => {
   }
 });
 
+app.post("/admin/machine/manualSetOutOfService", async (req, res) => {
+  try {
+    const machineId = req.body.machineId;
+
+    if (!machineId || typeof machineId !== "string") {
+      return res.status(400).json({ message: "Invalid machineId format, example: W-01 / D-01" });
+    }
+
+    const { data: targetMachine, error: machineQueryErr } = await supabase
+      .from("Machine_Table")
+      .select("machine_id, machine_status")
+      .eq("machine_id", machineId)
+      .single();
+
+    if (machineQueryErr || !targetMachine) {
+      return res.status(404).json({ message: "Target machine not found" });
+    }
+
+    if (targetMachine.machine_status === "outOfService") {
+      return res.status(400).json({ message: "This machine is already outOfService" });
+    }
+
+    const { error: updateMachineErr } = await supabase
+      .from("Machine_Table")
+      .update({ machine_status: "outOfService" })
+      .eq("machine_id", machineId);
+
+    if (updateMachineErr) {
+      console.error("Update machine status failed: ", updateMachineErr);
+      return res.status(500).json({ message: "Failed to update machine status" });
+    }
+
+    const { data: userList, error: userQueryErr } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .not("fcm_token", "is", null);
+
+    if (userQueryErr) {
+      console.error("Fetch user fcm token error: ", userQueryErr);
+      return res.status(500).json({ message: "Machine shutdown succeeded, but notification send failed" });
+    }
+
+    const tokenArr = userList.map(item => item.fcm_token);
+    const pushPayload = {
+      notification: {
+        title: "Device Temporary Shutdown Notice",
+        body: `Machine ${machineId} is detected faulty by admin, temporarily unavailable. Please select other devices.`
+      },
+      data: {
+        type: "machineFaultNotice",
+        machineId: machineId
+      }
+    };
+
+    for (const singleToken of tokenArr) {
+      try {
+        await admin.messaging().send({
+          token: singleToken,
+          ...pushPayload
+        });
+      } catch (singlePushErr) {
+        console.warn(`Push failed for token ${singleToken}: `, singlePushErr.message);
+      }
+    }
+
+    return res.status(200).json({ success: true, message: "Machine marked outOfService, all user notifications sent" });
+  } catch (globalErr) {
+    console.error("Manual shutdown api global error: ", globalErr);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+app.post("/admin/locker/manualSetOutOfService", async (req, res) => {
+  try {
+    const lockerId = req.body.lockerId;
+
+    if (!lockerId || typeof lockerId !== "number") {
+      return res.status(400).json({ message: "lockerId must be pure number like 1,2,3..." });
+    }
+
+    const { data: targetLocker, error: lockerQueryErr } = await supabase
+      .from("Locker_Table")
+      .select("locker_id, locker_status")
+      .eq("locker_id", lockerId)
+      .single();
+
+    if (lockerQueryErr || !targetLocker) {
+      return res.status(404).json({ message: "Target locker not found" });
+    }
+
+    if (targetLocker.locker_status === "outOfService") {
+      return res.status(400).json({ message: "This locker is already outOfService" });
+    }
+
+    const { error: updateLockerErr } = await supabase
+      .from("Locker_Table")
+      .update({ locker_status: "outOfService" })
+      .eq("locker_id", lockerId);
+
+    if (updateLockerErr) {
+      console.error("Update locker status error: ", updateLockerErr);
+      return res.status(500).json({ message: "Failed to update locker status" });
+    }
+
+    const { data: userList, error: userQueryErr } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .not("fcm_token", "is", null);
+
+    if (userQueryErr) {
+      console.error("Fetch user fcm token error: ", userQueryErr);
+      return res.status(500).json({ message: "Locker shutdown succeeded, but notification send failed" });
+    }
+
+    const tokenArr = userList.map(item => item.fcm_token);
+    const pushPayload = {
+      notification: {
+        title: "Locker Temporary Shutdown Notice",
+        body: `Locker ${lockerId} is detected faulty by admin, temporarily unavailable. Please select other lockers.`
+      },
+      data: {
+        type: "lockerFaultNotice",
+        lockerId: lockerId
+      }
+    };
+
+    for (const singleToken of tokenArr) {
+      try {
+        await admin.messaging().send({
+          token: singleToken,
+          ...pushPayload
+        });
+      } catch (singlePushErr) {
+        console.warn(`Push failed for token ${singleToken}: `, singlePushErr.message);
+      }
+    }
+
+    return res.status(200).json({ success: true, message: "Locker marked outOfService, all user notifications sent" });
+  } catch (globalErr) {
+    console.error("Locker shutdown api global error: ", globalErr);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
 // test endpoint to verify backend and database connection
 app.get('/', (req, res) => {
   res.send('Backend deployed successfully! Connected to Supabase database.');
