@@ -154,39 +154,72 @@ class __MachineTabViewState extends State<_MachineTabView> {
   Widget buildMachineCard(Machine m) {
   final bool isOutOfService = m.status == MachineStatus.outOfService;
   return GestureDetector(
-    onTap: isOutOfService
-        ? null
-        : () async {
-            final bool? confirm = await showDialog<bool>(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                title: const Text("Device Shutdown"),
-                content: Text("Confirm to mark machine ${m.machineId} as outOfService. All users will receive push notifications."),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, true),
-                    child: const Text("Confirm Shutdown"),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, false),
-                    child: const Text("Cancel"),
-                  ),
-                ],
+    onTap: () async {
+      // if the machine is out of service, show a restore confirmation dialog
+      if (isOutOfService) {
+        final bool? confirm = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text("Restore Machine"),
+            content: Text("Confirm to restore machine ${m.machineId} to available."),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text("Confirm Restore"),
               ),
-            );
-            if (confirm == true) {
-              try {
-                await callManualMachineStopApi(m.machineId);
-                await fetchMachineData();
-              } catch (err) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(err.toString())),
-                  );
-                }
-              }
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text("Cancel"),
+              ),
+            ],
+          ),
+        );
+        if (confirm == true) {
+          try {
+            await callManualMachineRestoreApi(m.machineId);
+            await fetchMachineData();
+          } catch (err) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(err.toString())),
+              );
             }
-          },
+          }
+        }
+      }
+      // if the machine is not out of service, show a shutdown confirmation dialog
+      else {
+        final bool? confirm = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text("Device Shutdown"),
+            content: Text("Confirm to mark machine ${m.machineId} as outOfService. All users will receive push notifications."),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text("Confirm Shutdown"),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text("Cancel"),
+              ),
+            ],
+          ),
+        );
+        if (confirm == true) {
+          try {
+            await callManualMachineStopApi(m.machineId);
+            await fetchMachineData();
+          } catch (err) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(err.toString())),
+              );
+            }
+          }
+        }
+      }
+    },
     child: Container(
       decoration: BoxDecoration(
         color: getMachineBg(m.status),
@@ -204,7 +237,7 @@ class __MachineTabViewState extends State<_MachineTabView> {
           ),
         ],
       ),
-    )
+    ),
   );
 }
 
@@ -221,6 +254,18 @@ Future<void> callManualMachineStopApi(String machineId) async {
     }
   } catch (e) {
     rethrow; 
+  }
+}
+
+Future<void> callManualMachineRestoreApi(String machineId) async {
+  final response = await http.post(
+    Uri.parse("https://laundrypulse.onrender.com/admin/machine/manualRestoreToAvailable"),
+    headers: {"Content-Type": "application/json"},
+    body: jsonEncode({"machineId": machineId}),
+  );
+  final resBody = jsonDecode(response.body);
+  if (response.statusCode != 200) {
+    throw Exception(resBody["message"]);
   }
 }
 
@@ -355,39 +400,72 @@ class __LockerTabViewState extends State<_LockerTabView> {
   Widget buildLockerCard(Locker l) {
   final bool isOutOfService = l.status == LockerStatus.outOfService;
   return GestureDetector(
-    onTap: isOutOfService
-        ? null
-        : () async {
-            final bool? confirm = await showDialog<bool>(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                title: const Text("Locker Shutdown"),
-                content: Text("Confirm to mark locker ${l.lockerId} as outOfService. All users will receive push notifications."),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, true),
-                    child: const Text("Confirm Shutdown"),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.pop(ctx, false),
-                    child: const Text("Cancel"),
-                  ),
-                ],
+    onTap: () async {
+      // if the locker is out of service, show a restore confirmation dialog
+      if (isOutOfService) {
+        final bool? confirm = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text("Restore Locker"),
+            content: Text("Confirm to restore locker ${l.lockerId} to available."),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text("Confirm Restore"),
               ),
-            );
-            if (confirm == true) {
-              try {
-                await callManualLockerStopApi(l.lockerId);
-                await fetchLockerData();
-              } catch (err) {
-                if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(err.toString())),
-                  );
-                }
-              }
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text("Cancel"),
+              ),
+            ],
+          ),
+        );
+        if (confirm == true) {
+          try {
+            await callManualLockerRestoreApi(l.lockerId);
+            await fetchLockerData();
+          } catch (err) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(err.toString())),
+              );
             }
-          },
+          }
+        }
+      }
+      // if the locker is not out of service, show a shutdown confirmation dialog
+      else {
+        final bool? confirm = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text("Locker Shutdown"),
+            content: Text("Confirm to mark locker ${l.lockerId} as outOfService. All users will receive push notifications."),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text("Confirm Shutdown"),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text("Cancel"),
+              ),
+            ],
+          ),
+        );
+        if (confirm == true) {
+          try {
+            await callManualLockerStopApi(l.lockerId);
+            await fetchLockerData();
+          } catch (err) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text(err.toString())),
+              );
+            }
+          }
+        }
+      }
+    },
     child: Container(
       decoration: BoxDecoration(
         color: getLockerBg(l.status),
@@ -402,9 +480,9 @@ class __LockerTabViewState extends State<_LockerTabView> {
           ),
         ],
       ),
-    )
+    ),
   );
-  }
+}
 
   Future<void> callManualLockerStopApi(int lockerId) async {
   try {
@@ -421,6 +499,18 @@ class __LockerTabViewState extends State<_LockerTabView> {
     rethrow;
   }
   }
+
+  Future<void> callManualLockerRestoreApi(int lockerId) async {
+  final response = await http.post(
+    Uri.parse("https://laundrypulse.onrender.com/admin/locker/manualRestoreToAvailable"),
+    headers: {"Content-Type": "application/json"},
+    body: jsonEncode({"lockerId": lockerId}),
+  );
+  final resBody = jsonDecode(response.body);
+  if (response.statusCode != 200) {
+    throw Exception(resBody["message"]);
+  }
+}
 
   Future<void> fetchLockerData() async {
     try {
