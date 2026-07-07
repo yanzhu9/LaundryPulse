@@ -1698,13 +1698,13 @@ app.post("/api/create-fault-report", async (req, res) => {
 
     // 3. Update the facility's status to "outOfService" in the corresponding table
     let updateErr = null;
-    if (facilityType === "Washer" || facilityType === "Dryer") {
+    if (facilityType === "washer" || facilityType === "dryer") {
       const { error } = await supabase
         .from("Machine_Table")
         .update({ machine_status: "outOfService" })
         .eq("machine_id", facilityNumber);
       updateErr = error;
-    } else if (facilityType === "Locker") {
+    } else if (facilityType === "locker") {
       const { error } = await supabase
         .from("Locker_Table")
         .update({ locker_status: "outOfService" })
