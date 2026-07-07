@@ -1892,7 +1892,8 @@ app.post("/admin/machine/manualSetOutOfService", async (req, res) => {
     const { data: userList, error: userQueryErr } = await supabase
       .from("User_Table")
       .select("fcm_token")
-      .not("fcm_token", "is", null);
+      .not("fcm_token", "is", null)
+      .eq("role", "user");
 
     if (userQueryErr) {
       console.error("Fetch user fcm token error: ", userQueryErr);
@@ -1964,7 +1965,8 @@ app.post("/admin/locker/manualSetOutOfService", async (req, res) => {
     const { data: userList, error: userQueryErr } = await supabase
       .from("User_Table")
       .select("fcm_token")
-      .not("fcm_token", "is", null);
+      .not("fcm_token", "is", null)
+      .eq("role", "user");
 
     if (userQueryErr) {
       console.error("Fetch user fcm token error: ", userQueryErr);
@@ -1979,7 +1981,7 @@ app.post("/admin/locker/manualSetOutOfService", async (req, res) => {
       },
       data: {
         type: "lockerFaultNotice",
-        lockerId: lockerId
+        lockerId: lockerId.toString()
       }
     };
 
