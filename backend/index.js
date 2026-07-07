@@ -2007,76 +2007,148 @@ app.post("/admin/locker/manualSetOutOfService", async (req, res) => {
 // POST /admin/machine/manualRestoreToAvailable
 app.post("/admin/machine/manualRestoreToAvailable", async (req, res) => {
   try {
-    const { machineId } = req.body;
+    const machineId = req.body.machineId;
 
-    await supabase
+    if (!machineId || typeof machineId !== "string") {
+      return res.status(400).json({ message: "machineId must be valid string like W‑01" });
+    }
+
+    const { data: targetMachine, error: machineQueryErr } = await supabase
+      .from("Machine_Table")
+      .select("machine_id, machine_status")
+      .eq("machine_id", machineId)
+      .single();
+
+    if (machineQueryErr || !targetMachine) {
+      return res.status(404).json({ message: "Target machine not found" });
+    }
+
+    if (targetMachine.machine_status === "available") {
+      return res.status(400).json({ message: "This machine is already available" });
+    }
+
+    const { data: userList, error: userQueryErr } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .eq("role", "user")
+      .not("fcm_token", "is", null);
+
+    if (userQueryErr) {
+      console.error("Fetch user fcm token error: ", userQueryErr);
+      return res.status(500).json({ message: "Machine restore succeeded, but notification send failed" });
+    }
+
+    const { error: updateMachineErr } = await supabase
       .from("Machine_Table")
       .update({ machine_status: "available" })
       .eq("machine_id", machineId);
 
-    const { data: userList } = await supabase
-      .from("User_Table")
-      .not("fcm_token", "is", null)
-      .eq("role", "user");
-
-    const fcmTokens = userList.map(item => item.fcm_token);
-
-    for (const token of fcmTokens) {
-      await admin.messaging().send({
-        notification: {
-          title: "Device Restored Notice",
-          body: `Machine ${machineId} has been repaired and available now.`
-        },
-        data: {
-          type: "machineRestoreNotice",
-          machineId: machineId
-        },
-        token: token
-      }).catch(() => {
-        console.log("Push failed for token");
-      });
+    if (updateMachineErr) {
+      console.error("Update machine status error: ", updateMachineErr);
+      return res.status(500).json({ message: "Failed to update machine status" });
     }
-    res.status(200).json({ message: "success" });
-  } catch (err) {
-    res.status(400).json({ message: err.message });
+
+    const tokenArr = userList.map(item => item.fcm_token);
+    const pushPayload = {
+      notification: {
+        title: "Device Restored Notice",
+        body: `Machine ${machineId} has been repaired, now available for use.`
+      },
+      data: {
+        type: "machineRestoreNotice",
+        machineId: machineId
+      }
+    };
+
+    for (const singleToken of tokenArr) {
+      try {
+        await admin.messaging().send({
+          token: singleToken,
+          ...pushPayload
+        });
+      } catch (singlePushErr) {
+        console.warn(`Push failed for token ${singleToken}: `, singlePushErr.message);
+      }
+    }
+
+    return res.status(200).json({ success: true, message: "Machine restored to available, all user notifications sent" });
+  } catch (globalErr) {
+    console.error("Machine restore api global error: ", globalErr);
+    return res.status(500).json({ message: "Internal server error" });
   }
 });
 
 // POST /admin/locker/manualRestoreToAvailable
 app.post("/admin/locker/manualRestoreToAvailable", async (req, res) => {
   try {
-    const { lockerId } = req.body;
+    const lockerId = req.body.lockerId;
 
-    await supabase
+    if (!lockerId || typeof lockerId !== "number") {
+      return res.status(400).json({ message: "lockerId must be pure number like 1,2,3..." });
+    }
+
+    const { data: targetLocker, error: lockerQueryErr } = await supabase
+      .from("Locker_Table")
+      .select("locker_id, locker_status")
+      .eq("locker_id", lockerId)
+      .single();
+
+    if (lockerQueryErr || !targetLocker) {
+      return res.status(404).json({ message: "Target locker not found" });
+    }
+
+    if (targetLocker.locker_status === "available") {
+      return res.status(400).json({ message: "This locker is already available" });
+    }
+
+    const { data: userList, error: userQueryErr } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .eq("role", "user")
+      .not("fcm_token", "is", null);
+
+    if (userQueryErr) {
+      console.error("Fetch user fcm token error: ", userQueryErr);
+      return res.status(500).json({ message: "Locker restore succeeded, but notification send failed" });
+    }
+
+    const { error: updateLockerErr } = await supabase
       .from("Locker_Table")
       .update({ locker_status: "available" })
       .eq("locker_id", lockerId);
 
-    const { data: userList } = await supabase
-      .from("User_Table")
-      .not("fcm_token", "is", null)
-      .eq("role", "user");
-
-    const fcmTokens = userList.map(item => item.fcm_token);
-
-    for (const token of fcmTokens) {
-      await admin.messaging().send({
-        notification: {
-          title: "Locker Restored Notice",
-          body: `Locker ${lockerId} has been repaired and available now.`
-        },
-        data: {
-          type: "lockerRestoreNotice",
-          lockerId: lockerId.toString()
-        },
-        token: token
-      }).catch(() => {
-        console.log("Push failed for token");
-      });
+    if (updateLockerErr) {
+      console.error("Update locker status error: ", updateLockerErr);
+      return res.status(500).json({ message: "Failed to update locker status" });
     }
-    res.status(200).json({ message: "success" });
-  } catch (err) {
-    res.status(400).json({ message: err.message });
+
+    const tokenArr = userList.map(item => item.fcm_token);
+    const pushPayload = {
+      notification: {
+        title: "Locker Restored Notice",
+        body: `Locker ${lockerId} has been repaired, now available for use.`
+      },
+      data: {
+        type: "lockerRestoreNotice",
+        lockerId: lockerId.toString()
+      }
+    };
+
+    for (const singleToken of tokenArr) {
+      try {
+        await admin.messaging().send({
+          token: singleToken,
+          ...pushPayload
+        });
+      } catch (singlePushErr) {
+        console.warn(`Push failed for token ${singleToken}: `, singlePushErr.message);
+      }
+    }
+
+    return res.status(200).json({ success: true, message: "Locker restored to available, all user notifications sent" });
+  } catch (globalErr) {
+    console.error("Locker restore api global error: ", globalErr);
+    return res.status(500).json({ message: "Internal server error" });
   }
 });
 
