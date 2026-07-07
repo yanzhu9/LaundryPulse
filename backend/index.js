@@ -162,7 +162,7 @@ app.post('/login', async (req, res) => {
 
     const { data: users, error: findError } = await supabase
       .from('User_Table')
-      .select('user_id, email, password')
+      .select('user_id, email, password, role')
       .eq('email', email)
       .limit(1);
 
@@ -185,7 +185,8 @@ app.post('/login', async (req, res) => {
     return res.json({
       success: true,
       msg: "Login successful! Redirecting...",
-      user_id: user.user_id
+      user_id: user.user_id,
+      role: user.role
     });
 
   } catch (err) {

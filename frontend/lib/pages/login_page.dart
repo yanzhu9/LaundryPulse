@@ -71,6 +71,7 @@ class _LoginPageState extends State<LoginPage> {
 
     if(ok){
       current_user_id = res.data["user_id"];
+      current_user_role = res.data["role"];
 
       // Try to save FCM token (non-critical, won't block login if it fails)
       try {
@@ -87,7 +88,12 @@ class _LoginPageState extends State<LoginPage> {
       }
 
       _showSuccess(msg);
-      if (mounted) Navigator.pushReplacementNamed(context, '/welcome');
+      // Admins go straight to the admin dashboard; everyone else to /welcome.
+      if (mounted) {
+        final String route =
+            current_user_role == "admin" ? '/admin' : '/welcome';
+        Navigator.pushReplacementNamed(context, route);
+      }
     }else{
       _showError(msg);
     }
