@@ -2004,6 +2004,82 @@ app.post("/admin/locker/manualSetOutOfService", async (req, res) => {
   }
 });
 
+// POST /admin/machine/manualRestoreToAvailable
+app.post("/admin/machine/manualRestoreToAvailable", async (req, res) => {
+  try {
+    const { machineId } = req.body;
+
+    await supabase
+      .from("Machine_Table")
+      .update({ machine_status: "available" })
+      .eq("machine_id", machineId);
+
+    const { data: userList } = await supabase
+      .from("User_Table")
+      .not("fcm_token", "is", null)
+      .eq("role", "user");
+
+    const fcmTokens = userList.map(item => item.fcm_token);
+
+    for (const token of fcmTokens) {
+      await admin.messaging().send({
+        notification: {
+          title: "Device Restored Notice",
+          body: `Machine ${machineId} has been repaired and available now.`
+        },
+        data: {
+          type: "machineRestoreNotice",
+          machineId: machineId
+        },
+        token: token
+      }).catch(() => {
+        console.log("Push failed for token");
+      });
+    }
+    res.status(200).json({ message: "success" });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+// POST /admin/locker/manualRestoreToAvailable
+app.post("/admin/locker/manualRestoreToAvailable", async (req, res) => {
+  try {
+    const { lockerId } = req.body;
+
+    await supabase
+      .from("Locker_Table")
+      .update({ locker_status: "available" })
+      .eq("locker_id", lockerId);
+
+    const { data: userList } = await supabase
+      .from("User_Table")
+      .not("fcm_token", "is", null)
+      .eq("role", "user");
+
+    const fcmTokens = userList.map(item => item.fcm_token);
+
+    for (const token of fcmTokens) {
+      await admin.messaging().send({
+        notification: {
+          title: "Locker Restored Notice",
+          body: `Locker ${lockerId} has been repaired and available now.`
+        },
+        data: {
+          type: "lockerRestoreNotice",
+          lockerId: lockerId.toString()
+        },
+        token: token
+      }).catch(() => {
+        console.log("Push failed for token");
+      });
+    }
+    res.status(200).json({ message: "success" });
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
 // test endpoint to verify backend and database connection
 app.get('/', (req, res) => {
   res.send('Backend deployed successfully! Connected to Supabase database.');
