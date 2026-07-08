@@ -436,8 +436,14 @@ app.get("/api/get-queue-overview", async (req, res) => {
       .eq("machine_status", "available");
 
     if (availableMachines.length > 0) {
-      peopleInQueue = 0;
-      machineBaseWaitMin = 0;
+      return res.json({
+      peopleInQueue: 0,
+      earliestReadyMin: 0,
+      isUserInQueue: false,
+      peopleAhead: 0,
+      isInWasher: false,
+      isInDryer: false
+    });
     }
 
     // 5. Query all waiting queue records for this user
