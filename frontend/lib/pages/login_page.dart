@@ -170,6 +170,14 @@ class _LoginPageState extends State<LoginPage> {
               child: const Text("Don't have an account? Register"),
             ),
 
+            // Go to Reset Password
+            TextButton(
+              onPressed: () {
+                Navigator.pushNamed(context, '/reset-password');
+              },
+              child: const Text("Forgot password?"),
+            ),
+
           ],
         ),
       ),

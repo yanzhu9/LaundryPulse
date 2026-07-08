@@ -197,6 +197,72 @@ app.post('/login', async (req, res) => {
   }
 });
 
+// Reset a user's password directly by email.
+// Note: this does not verify identity (no email code) — acceptable for the
+// current project scope; see the reset-password plan for the secure upgrade.
+app.post('/reset-password', async (req, res) => {
+  const { email: rawEmail, newPassword } = req.body;
+  const email = rawEmail?.toLowerCase().trim();
+
+  try {
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!email || !emailRegex.test(email)) {
+      return res.json({
+        success: false,
+        msg: "Invalid email format. Please enter a valid email address."
+      });
+    }
+
+    // Same password rules as register/login.
+    if (!newPassword || newPassword.length < 6) {
+      return res.json({
+        success: false,
+        msg: "Password must be at least 6 characters long."
+      });
+    }
+    const hasLetter = /[a-zA-Z]/.test(newPassword);
+    const hasNumber = /\d/.test(newPassword);
+    if (!hasLetter || !hasNumber) {
+      return res.json({
+        success: false,
+        msg: "Password must contain both letters and numbers."
+      });
+    }
+
+    // Only reset if the email actually exists.
+    const { data: users, error: findError } = await supabase
+      .from('User_Table')
+      .select('user_id')
+      .eq('email', email)
+      .limit(1);
+
+    if (findError || !users || users.length === 0) {
+      return res.json({
+        success: false,
+        msg: "Email not found. Please check your email address."
+      });
+    }
+
+    const { error: updateError } = await supabase
+      .from('User_Table')
+      .update({ password: newPassword })
+      .eq('email', email);
+
+    if (updateError) throw updateError;
+
+    return res.json({
+      success: true,
+      msg: "Password reset successful! Please log in with your new password."
+    });
+
+  } catch (err) {
+    return res.json({
+      success: false,
+      msg: "Password reset failed. Please try again later."
+    });
+  }
+});
+
 app.get('/machines', async (req, res) => {
   const { data, error } = await supabase
     .from('Machine_Table')

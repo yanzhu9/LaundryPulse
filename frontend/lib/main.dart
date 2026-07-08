@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'pages/login_page.dart';
 import 'pages/register_page.dart';
 import 'pages/welcome_page.dart';
+import 'pages/reset_password_page.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
@@ -107,6 +108,7 @@ class _MyAppState extends State<MyApp> {
       routes: {
         '/login':    (context) => const LoginPage(),
         '/register': (context) => const RegisterPage(),
+        '/reset-password': (context) => const ResetPasswordPage(),
         '/welcome':  (context) => const WelcomePage(),
         '/home':     (context) => const MyHomePage(),
         '/admin':    (context) => const Admin(),
