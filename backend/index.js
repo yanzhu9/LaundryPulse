@@ -366,6 +366,109 @@ app.post("/api/queue-book", async (req, res) => {
   }
 });
 
+app.get("/api/get-queue-overview", async (req, res) => {
+  try {
+    const { user_id, type } = req.query;
+    const WASHER_CYCLE = 45;
+    const DRYER_CYCLE = 45;
+    const PICKUP_GRACE = 15;
+    const cycleBase = type === "washer" ? WASHER_CYCLE : DRYER_CYCLE;
+    const now = new Date();
+
+    // 1. Query all waiting queue records for this machine type (booking_status = "waiting", machine_id = null) → get the number of people in the queue
+    const { data: waitingList } = await supabase
+      .from("Booking_Table")
+      .select("user_id, created_at")
+      .eq("machine_type", type)
+      .eq("booking_status", "waiting")
+      .is("machine_id", null)
+      .order("created_at", { ascending: true });
+
+    let peopleInQueue = waitingList.length;
+
+    // 2. Query all occupied machines of this type (machine_status = "occupied") → calculate the earliest time any machine will be free, then calculate the base wait time in minutes
+    let machineBaseWaitMin = 0;
+    const { data: occupiedMachines } = await supabase
+      .from("Machine_Table")
+      .select("machine_id, reserved_end_at, finished_at, pickup_end_at")
+      .eq("machine_type", type)
+      .eq("machine_status", "occupied");
+
+    if (occupiedMachines.length > 0) {
+      const waitList = [];
+      for (const machine of occupiedMachines) {
+        let machineFreeAt;
+        const { reserved_end_at, finished_at, pickup_end_at } = machine;
+
+        if (finished_at === null && pickup_end_at === null) {
+          const reserveEnd = new Date(reserved_end_at);
+          machineFreeAt = new Date(reserveEnd.getTime() + (cycleBase + PICKUP_GRACE) * 60 * 1000);
+        } else if (finished_at && pickup_end_at === null) {
+          const finishTime = new Date(finished_at);
+          machineFreeAt = new Date(finishTime.getTime() + PICKUP_GRACE * 60 * 1000);
+        } else if (pickup_end_at) {
+          machineFreeAt = new Date(pickup_end_at);
+        } else {
+          machineFreeAt = now;
+        }
+        const baseWait = Math.max(0, (machineFreeAt - now) / 1000 / 60);
+        waitList.push(baseWait);
+      }
+      machineBaseWaitMin = Math.round(Math.min(...waitList));
+    }
+
+    // 3. Check if the user is already in the queue and how many people are ahead of them
+    let isUserInQueue = false;
+    let peopleAhead = 0;
+    for (let i = 0; i < waitingList.length; i++) {
+      if (waitingList[i].user_id === user_id) {
+        isUserInQueue = true;
+        peopleAhead = i;
+        break;
+      }
+    }
+
+    // 4. If there are any available machines of this type, reset the queue count and base wait time to 0 since the user can be allocated immediately
+    const { data: availableMachines } = await supabase
+      .from("Machine_Table")
+      .select("*")
+      .eq("machine_type", type)
+      .eq("machine_status", "available");
+
+    if (availableMachines.length > 0) {
+      peopleInQueue = 0;
+      machineBaseWaitMin = 0;
+    }
+
+    // 5. Query all waiting queue records for this user
+    const { data: userWaitingRecords } = await supabase
+      .from("Booking_Table")
+      .select("machine_type")
+      .eq("user_id", user_id)
+      .eq("booking_status", "waiting")
+      .is("machine_id", null);
+
+    let isInWasher = false;
+    let isInDryer = false;
+    userWaitingRecords.forEach(item => {
+      if (item.machine_type === "washer") isInWasher = true;
+      if (item.machine_type === "dryer") isInDryer = true;
+    });
+
+    res.json({
+      peopleInQueue: peopleInQueue,
+      earliestReadyMin: machineBaseWaitMin,
+      isUserInQueue: isUserInQueue,
+      peopleAhead: peopleAhead,
+      isInWasher: isInWasher,
+      isInDryer: isInDryer
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Helper function to get machine type by machine ID, used in queue allocation to ensure users are allocated to the correct machine type (washer/dryer)
 async function getMachineType(machineId) {
   try {
