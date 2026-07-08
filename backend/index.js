@@ -108,7 +108,7 @@ app.post('/register', async (req, res) => {
 
     await supabase
       .from('User_Table')
-      .insert([{ email, password, credit_score: 15}]);
+      .insert([{ email, password, credit_score: 15, role: "user"}]);
 
     return res.json({
       success: true,
