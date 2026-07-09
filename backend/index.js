@@ -2402,6 +2402,40 @@ app.post("/admin/locker/manualRestoreToAvailable", async (req, res) => {
   }
 });
 
+// POST /api/admin/peak-setting
+app.post("/api/admin/peak-setting", async (req, res) => {
+  try {
+    const { week_day, start_hour, end_hour, washer_max, dryer_max } = req.body;
+
+    // Check if the time slot already exists
+    const { data: existRecord } = await supabase
+      .from("Peak_Hour_Setting")
+      .select("id")
+      .eq("week_day", week_day)
+      .eq("start_hour", start_hour);
+
+    if (existRecord.length > 0) {
+      return res.json({ success: false, message: "This time slot has already been enabled." });
+    }
+
+    // Insert the new peak-hour setting into the database
+    await supabase.from("Peak_Hour_Setting").insert([
+      {
+        week_day: week_day,
+        start_hour: start_hour,
+        end_hour: end_hour,
+        washer_max: washer_max,
+        dryer_max: dryer_max,
+        is_active: true
+      }
+    ]);
+
+    res.json({ success: true, message: "Peak-hour setting saved successfully." });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // test endpoint to verify backend and database connection
 app.get('/', (req, res) => {
   res.send('Backend deployed successfully! Connected to Supabase database.');
