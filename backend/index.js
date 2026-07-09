@@ -1057,6 +1057,46 @@ setInterval(async () => {
       await sendNotification(item.user_id, notifyTitle, notifyBody);
     }
     console.log(`Sent overdue alert to ${waitingUserList.length} queued users for ${m.machine_type}`);
+
+    // Check if all machines of this type are overdue → if so, notify all waiting users that the queue is expired and they need to re-queue
+    const { data: allTypeMachines } = await supabase
+      .from("Machine_Table")
+      .select("machine_status")
+      .eq("machine_type", m.machine_type);
+
+    const allMachineOverdue = allTypeMachines.every(item => item.machine_status === "overdue");
+
+    if (allMachineOverdue) {
+      // 1、 Query all waiting users in the queue for this machine type (booking_status = "waiting", machine_id = null) → send them a notification that the queue is expired and they need to re-queue
+      const { data: waitingUserList } = await supabase
+        .from("Booking_Table")
+        .select("user_id")
+        .eq("machine_type", m.machine_type)
+        .eq("booking_status", "waiting")
+        .is("machine_id", null);
+
+      // 2、 Send notification to all waiting users that the queue is expired and they need to re-queue
+      const notifyTitle = "Queue Cancelled";
+      const notifyBody = "All machines are overdue. Your queue position has expired. Help collect clothes and you can continue to use the machine.";
+
+      for (const userItem of waitingUserList) {
+        try {
+          await sendNotification(userItem.user_id, notifyTitle, notifyBody);
+        } catch (pushErr) {
+          console.log(`Queue user ${userItem.user_id} push skipped`);
+        }
+      }
+
+      // 3、 Update all waiting queue records for this machine type (booking_status = "waiting", machine_id = null) → set booking_status = "expired" to clear the queue
+      await supabase
+        .from("Booking_Table")
+        .update({ booking_status: "expired" })
+        .eq("machine_type", m.machine_type)
+        .eq("booking_status", "waiting")
+        .is("machine_id", null);
+
+      console.log(`All ${m.machine_type} machines overdue, queue expired for all waiting users`);
+    }
   }
 }, 5000);
 
