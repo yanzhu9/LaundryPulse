@@ -835,14 +835,16 @@ class _QueuePageState extends State<QueuePage> {
     final response = await http.get(Uri.parse(url));
     var data = jsonDecode(response.body);
 
-    setState(() {
-      peopleInQueue = data["peopleInQueue"];
-      earliestReadyMin = data["earliestReadyMin"];
-      isUserInQueue = data["isUserInQueue"];
-      peopleAhead = data["peopleAhead"];
-      inWasherQueue = data["isInWasher"];
-      inDryerQueue = data["isInDryer"];
-    });
+    if(mounted) {
+      setState(() {
+        peopleInQueue = data["peopleInQueue"];
+        earliestReadyMin = data["earliestReadyMin"];
+        isUserInQueue = data["isUserInQueue"];
+        peopleAhead = data["peopleAhead"];
+        inWasherQueue = data["isInWasher"];
+        inDryerQueue = data["isInDryer"];
+      });
+    }
   }
 
   // Queue for washer
