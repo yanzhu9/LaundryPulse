@@ -1046,26 +1046,7 @@ setInterval(async () => {
     );
     console.log(`Machine ${m.machine_id} pickup expired → overdue`);
 
-     // Query all waiting users in the queue for this machine type (booking_status = "waiting", machine_id = null) → send them a notification that this machine is overdue and they may help collect clothes to unlock it
-    const { data: waitingUserList } = await supabase
-      .from("Booking_Table")
-      .select("user_id")
-      .eq("machine_type", m.machine_type)
-      .eq("booking_status", "waiting")
-      .is("machine_id", null);
-
-    if (waitingUserList.length === 0) continue;
-
-    // Send notification to all waiting users that this machine is overdue and they may help collect clothes to unlock it
-    const notifyTitle = "Waiting Time Updated";
-    const notifyBody = `Machine ${m.machine_id} is overdue. You may help collect clothes to unlock this machine.`;
-
-    for (const item of waitingUserList) {
-      await sendNotification(item.user_id, notifyTitle, notifyBody);
-    }
-    console.log(`Sent overdue alert to ${waitingUserList.length} queued users for ${m.machine_type}`);
-
-    // Check if all machines of this type are overdue → if so, notify all waiting users that the queue is expired and they need to re-queue
+     // Check if all machines of this type are overdue → if so, notify all waiting users that the queue is expired and they need to re-queue
     const { data: allTypeMachines } = await supabase
       .from("Machine_Table")
       .select("machine_status")
@@ -1103,6 +1084,25 @@ setInterval(async () => {
         .is("machine_id", null);
 
       console.log(`All ${m.machine_type} machines overdue, queue expired for all waiting users`);
+    } else {
+      // Query all waiting users in the queue for this machine type (booking_status = "waiting", machine_id = null) → send them a notification that this machine is overdue and they may help collect clothes to unlock it
+      const { data: waitingUserList } = await supabase
+        .from("Booking_Table")
+        .select("user_id")
+        .eq("machine_type", m.machine_type)
+        .eq("booking_status", "waiting")
+        .is("machine_id", null);
+
+      if (waitingUserList.length === 0) continue;
+
+      // Send notification to all waiting users that this machine is overdue and they may help collect clothes to unlock it
+      const notifyTitle = "Waiting Time Updated";
+      const notifyBody = `Machine ${m.machine_id} is overdue. You may help collect clothes to unlock this machine.`;
+
+      for (const item of waitingUserList) {
+        await sendNotification(item.user_id, notifyTitle, notifyBody);
+      }
+      console.log(`Sent overdue alert to ${waitingUserList.length} queued users for ${m.machine_type}`);
     }
   }
 }, 5000);
