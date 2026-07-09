@@ -997,7 +997,7 @@ setInterval(async () => {
   // 补充 current_user_id，用于发送 overdue 通知
   const { data: pickupExpireList } = await supabase
     .from("Machine_Table")
-    .select("machine_id, pickup_end_at, current_user_id")
+    .select("machine_id, pickup_end_at, current_user_id, machine_type")
     .eq("machine_status", "occupied")
     .not("pickup_end_at", "is", null);
 
@@ -1022,6 +1022,25 @@ setInterval(async () => {
       `You didn't collect from Machine ${m.machine_id} in time. Others may now assist in moving your laundry.`
     );
     console.log(`Machine ${m.machine_id} pickup expired → overdue`);
+
+     // Query all waiting users in the queue for this machine type (booking_status = "waiting", machine_id = null) → send them a notification that this machine is overdue and they may help collect clothes to unlock it
+    const { data: waitingUserList } = await supabase
+      .from("Booking_Table")
+      .select("user_id")
+      .eq("machine_type", m.machine_type)
+      .eq("booking_status", "waiting")
+      .is("machine_id", null);
+
+    if (waitingUserList.length === 0) continue;
+
+    // Send notification to all waiting users that this machine is overdue and they may help collect clothes to unlock it
+    const notifyTitle = "Waiting Time Updated";
+    const notifyBody = `Machine ${m.machine_id} is overdue. You may help collect clothes to unlock this machine.`;
+
+    for (const item of waitingUserList) {
+      await sendNotification(item.user_id, notifyTitle, notifyBody);
+    }
+    console.log(`Sent overdue alert to ${waitingUserList.length} queued users for ${m.machine_type}`);
   }
 }, 5000);
 
