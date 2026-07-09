@@ -923,6 +923,13 @@ setInterval(async () => {
     );
     console.log(`Machine ${m.machine_id} wash finished, 15-minute pickup window started`);
 
+    // Update the booking status to "finished" for this machine, so the booking record reflects that the wash cycle has completed.
+    await supabase
+      .from("Booking_Table")
+      .update({ booking_status: "finished" })
+      .eq("machine_id", m.machine_id)
+      .eq("booking_status", "using");
+    
     // Optional auto dryer queue transfer:
     // If the user opted in for a dryer when starting this washer cycle, automatically
     // reserve a dryer (or queue them) the moment the wash finishes, so they only make one trip.
