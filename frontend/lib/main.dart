@@ -1020,6 +1020,30 @@ class _QueuePageState extends State<QueuePage> {
               ),
               child: const Text("Queue for Dryer", style: TextStyle(fontSize: 17)),
             ),
+
+            const SizedBox(height: 35),
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 8),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: const [
+                  Text(
+                    "Note",
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.black54),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    "If people in queue remains the same while waiting time rises, certain machines are overdue and temporarily unavailable.",
+                    style: TextStyle(fontSize: 12.5, color: Color.fromARGB(255, 117, 117, 117), height: 1.45),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
