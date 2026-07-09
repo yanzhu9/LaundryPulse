@@ -321,6 +321,22 @@ app.post("/api/queue-book", async (req, res) => {
       });
     }
 
+    // Check if all machines of this type are overdue. If so, reject the booking request and inform the user that they can only use machines by helping others collect clothes.
+    const { data: allTypeMachines } = await supabase
+      .from("Machine_Table")
+      .select("machine_status")
+      .eq("machine_type", type);
+
+    // If all machines of this type are overdue, the user cannot join the queue and must help others collect clothes instead.
+    const allMachineOverdue = allTypeMachines.every(m => m.machine_status === "overdue");
+
+    if (allMachineOverdue) {
+      return res.json({
+        success: false,
+        message: "All machines of this type are overdue. You can only use machines by helping others collect clothes."
+      });
+    }
+    
     // 2. Try to find an available machine of the requested type. If found, allocate it immediately and set reserved_end_at = now + 15 min
     const { data: availableMachines } = await supabase
       .from("Machine_Table")
