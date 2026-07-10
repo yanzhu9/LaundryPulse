@@ -2525,7 +2525,7 @@ app.post("/api/admin/peak-setting", async (req, res) => {
           is_active: true
         }
       ]);
-      return res.json({ success: true, action: "insert", message: "Peak‑hour setting saved successfully." });
+      return res.json({ success: true, action: "insert", message: "Peak-hour setting saved successfully." });
     }
     res.status(500).json({ error: err.message });
   }
