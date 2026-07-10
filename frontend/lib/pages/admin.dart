@@ -1185,8 +1185,203 @@ class __UsageTabViewState extends State<_UsageTabView> {
 }
 
 // Admin Setting Page
-class AdminSettingPage extends StatelessWidget {
+class AdminSettingPage extends StatefulWidget {
   const AdminSettingPage({super.key});
+
+  @override
+  State<AdminSettingPage> createState() => _AdminSettingPageState();
+}
+
+class PeakTimeSlotItem {
+  final String title;
+  final int start;
+  final int end;
+  PeakTimeSlotItem(this.title, this.start, this.end);
+}
+
+class _AdminSettingPageState extends State<AdminSettingPage> {
+  final List<String> weekList = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+  final List<PeakTimeSlotItem> timeSlotList = [
+    PeakTimeSlotItem("00:00-02:00", 0, 2),
+    PeakTimeSlotItem("02:00-04:00", 2, 4),
+    PeakTimeSlotItem("04:00-06:00", 4, 6),
+    PeakTimeSlotItem("06:00-08:00", 6, 8),
+    PeakTimeSlotItem("08:00-10:00", 8, 10),
+    PeakTimeSlotItem("10:00-12:00", 10, 12),
+    PeakTimeSlotItem("12:00-14:00", 12, 14),
+    PeakTimeSlotItem("14:00-16:00", 14, 16),
+    PeakTimeSlotItem("16:00-18:00", 16, 18),
+    PeakTimeSlotItem("18:00-20:00", 18, 20),
+    PeakTimeSlotItem("20:00-22:00", 20, 22),
+    PeakTimeSlotItem("22:00-24:00", 22, 24),
+  ];
+
+  int selectedWeekIndex = -1;
+  int selectedTimeIndex = -1;
+
+  final TextEditingController washerMaxCtrl = TextEditingController();
+  final TextEditingController dryerMaxCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    washerMaxCtrl.dispose();
+    dryerMaxCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> handleSubmit() async {
+    // 1.check if both dropdowns have selections
+    if (selectedWeekIndex == -1 || selectedTimeIndex == -1) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please complete all selections.")));
+      }
+      return;
+    }
+    // 2.check if both input fields are filled
+    if (washerMaxCtrl.text.isEmpty || dryerMaxCtrl.text.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Please fill in queue limit numbers.")));
+      }
+      return;
+    }
+    // 3.check if both input fields are positive integers
+    final int washerMax = int.parse(washerMaxCtrl.text);
+    final int dryerMax = int.parse(dryerMaxCtrl.text);
+    if (washerMax <= 0 || dryerMax <= 0) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Queue limit cannot be zero or negative.")));
+      }
+      return;
+    }
+
+    final weekDay = selectedWeekIndex + 1;
+    final startHour = timeSlotList[selectedTimeIndex].start;
+    final endHour = timeSlotList[selectedTimeIndex].end;
+
+    String url = "https://laundrypulse-gf1v.onrender.com/api/admin/peak-setting";
+    final res = await http.post(
+      Uri.parse(url),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "week_day": weekDay,
+        "start_hour": startHour,
+        "end_hour": endHour,
+        "washer_max": washerMax,
+        "dryer_max": dryerMax,
+      }),
+    );
+    var result = jsonDecode(res.body);
+    if (!mounted) return;
+
+    // Case 1: New time slot, show confirmation dialog before inserting
+    if (result["action"] == "insert") {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text("Confirm Peak-Hour Rules"),
+          content: const Text(
+            "After enabling peak-hour restrictions:\n\n1. Users cannot queue again until their ongoing laundry is finished.\n2. Queue will stop accepting new users once reaching the maximum number.",
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                await insertNewPeak(weekDay, startHour, endHour, washerMax, dryerMax);
+              },
+              child: const Text("Yes"),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text("No"),
+            ),
+          ],
+        ),
+      );
+    }
+    // Case 2: Time slot already exists, limits are the same, show confirmation
+    else if (result["action"] == "same") {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result["message"])));
+    }
+    // Case 3: Time slot already exists, limits are different, show update confirmation dialog
+    else if (result["action"] == "update") {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text("Update Peak-Hour Limit"),
+          content: Text(
+            "This time slot already exists.\n\n"
+            "Original Washer limit: ${result["oldWasher"]}\n"
+            "Original Dryer limit: ${result["oldDryer"]}\n\n"
+            "Confirm to update to new limits?"
+          ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                await updatePeakLimit(weekDay, startHour, washerMax, dryerMax);
+              },
+              child: const Text("Confirm Update"),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text("Cancel"),
+            ),
+          ],
+        ),
+      );
+    }
+  }
+
+  // Insert new peak-hour rule
+  Future<void> insertNewPeak(int weekDay, int startHour, int endHour, int washerMax, int dryerMax) async {
+    String url = "https://laundrypulse-gf1v.onrender.com/api/admin/peak-setting";
+    final res = await http.post(
+      Uri.parse(url),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "week_day": weekDay,
+        "start_hour": startHour,
+        "end_hour": endHour,
+        "washer_max": washerMax,
+        "dryer_max": dryerMax,
+      }),
+    );
+    var result = jsonDecode(res.body);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result["message"])));
+      washerMaxCtrl.clear();
+      dryerMaxCtrl.clear();
+      setState(() {
+        selectedWeekIndex = -1;
+        selectedTimeIndex = -1;
+      });
+    }
+  }
+
+  // Update existing peak-hour rule
+  Future<void> updatePeakLimit(int weekDay, int startHour, int washerMax, int dryerMax) async {
+    final updateRes = await http.post(
+      Uri.parse("https://laundrypulse-gf1v.onrender.com/api/admin/update-peak-limit"),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "week_day": weekDay,
+        "start_hour": startHour,
+        "washer_max": washerMax,
+        "dryer_max": dryerMax,
+      }),
+    );
+    var updateResult = jsonDecode(updateRes.body);
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(updateResult["message"])));
+      washerMaxCtrl.clear();
+      dryerMaxCtrl.clear();
+      setState(() {
+        selectedWeekIndex = -1;
+        selectedTimeIndex = -1;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1196,10 +1391,86 @@ class AdminSettingPage extends StatelessWidget {
         title: const Text("Setting"),
         bottom: const PreferredSize(
           preferredSize: Size.fromHeight(1),
-          child: Divider(height: 1, color:  Color.fromARGB(255, 223, 222, 222)),
+          child: Divider(height: 1, color: Color.fromARGB(255, 223, 222, 222)),
         ),
       ),
-      body: const SizedBox.shrink(),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(22),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Peak-Hour Management",
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w500),
+            ),
+            const SizedBox(height: 24),
+
+            const Text("Select Weekday"),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<int>(
+              value: selectedWeekIndex == -1 ? null : selectedWeekIndex,
+              hint: const Text("Please select weekday", style: TextStyle(color: Colors.grey)),
+              items: List.generate(weekList.length, (index) {
+                return DropdownMenuItem(value: index, child: Text(weekList[index]));
+              }),
+              onChanged: (v) {
+                setState(() {
+                  selectedWeekIndex = v!;
+                });
+              },
+              decoration: const InputDecoration(border: OutlineInputBorder()),
+            ),
+
+            const SizedBox(height: 18),
+
+            const Text("Select 2‑hour time slot"),
+            const SizedBox(height: 8),
+            DropdownButtonFormField<int>(
+              value: selectedTimeIndex == -1 ? null : selectedTimeIndex,
+              hint: const Text("Please select 2-hour time slot", style: TextStyle(color: Colors.grey)),
+              items: List.generate(timeSlotList.length, (index) {
+                return DropdownMenuItem(value: index, child: Text(timeSlotList[index].title));
+              }),
+              onChanged: (v) {
+                setState(() {
+                  selectedTimeIndex = v!;
+                });
+              },
+              decoration: const InputDecoration(border: OutlineInputBorder()),
+            ),
+
+            const SizedBox(height: 18),
+
+            const Text("Washer Maximum Queue Size"),
+            const SizedBox(height: 8),
+            TextField(
+              controller: washerMaxCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(hintText: "Enter number", border: OutlineInputBorder()),
+            ),
+
+            const SizedBox(height: 18),
+
+            const Text("Dryer Maximum Queue Size"),
+            const SizedBox(height: 8),
+            TextField(
+              controller: dryerMaxCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(hintText: "Enter number", border: OutlineInputBorder()),
+            ),
+
+            const SizedBox(height: 32),
+
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: handleSubmit,
+                child: const Text("Enable Peak-Hour Rule"),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
