@@ -2414,18 +2414,36 @@ app.post("/api/admin/peak-setting", async (req, res) => {
   try {
     const { week_day, start_hour, end_hour, washer_max, dryer_max } = req.body;
 
-    // Check if the time slot already exists
+    // check if the peak-hour setting for the given week_day and start_hour already exists
     const { data: existRecord } = await supabase
       .from("Peak_Hour_Setting")
-      .select("id")
+      .select("id, washer_max, dryer_max")
       .eq("week_day", week_day)
-      .eq("start_hour", start_hour);
+      .eq("start_hour", start_hour)
+      .single();
 
-    if (existRecord.length > 0) {
-      return res.json({ success: false, message: "This time slot has already been enabled." });
+    // if existRecord is found, check if the new values are the same as the existing ones
+    if(existRecord){
+      // If the values are the same, return a response indicating that the setting is identical
+      if(existRecord.washer_max === washer_max && existRecord.dryer_max === dryer_max){
+        return res.json({
+          success: false,
+          action: "same",
+          message: "The peak-hour setting is identical to existing data."
+        });
+      }else{
+        // If the values are different, update the existing record with the new values
+        return res.json({
+          success: false,
+          action: "update",
+          oldWasher: existRecord.washer_max,
+          oldDryer: existRecord.dryer_max,
+          message: "This time slot already exists, limit value changed."
+        });
+      }
     }
 
-    // Insert the new peak-hour setting into the database
+    // If no existing record is found, insert a new peak-hour setting
     await supabase.from("Peak_Hour_Setting").insert([
       {
         week_day: week_day,
@@ -2437,10 +2455,36 @@ app.post("/api/admin/peak-setting", async (req, res) => {
       }
     ]);
 
-    res.json({ success: true, message: "Peak-hour setting saved successfully." });
+    res.json({ success: true, action: "insert", message: "Peak-hour setting saved successfully." });
   } catch (err) {
+    // Handle the specific error code for unique constraint violation (PGRST116)
+    if(err.code === "PGRST116"){
+      await supabase.from("Peak_Hour_Setting").insert([
+        {
+          week_day: req.body.week_day,
+          start_hour: req.body.start_hour,
+          end_hour: req.body.end_hour,
+          washer_max: req.body.washer_max,
+          dryer_max: req.body.dryer_max,
+          is_active: true
+        }
+      ]);
+      return res.json({ success: true, action: "insert", message: "Peak‑hour setting saved successfully." });
+    }
     res.status(500).json({ error: err.message });
   }
+});
+
+// POST /api/admin/update-peak-limit
+app.post("/api/admin/update-peak-limit", async (req, res) => {
+  const { week_day, start_hour, washer_max, dryer_max } = req.body;
+  await supabase
+    .from("Peak_Hour_Setting")
+    .update({ washer_max: washer_max, dryer_max: dryer_max })
+    .eq("week_day", week_day)
+    .eq("start_hour", start_hour);
+
+  res.json({ success: true, message: "Peak-hour limits updated successfully." });
 });
 
 // test endpoint to verify backend and database connection
