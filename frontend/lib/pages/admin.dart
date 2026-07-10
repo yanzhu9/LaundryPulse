@@ -1285,9 +1285,19 @@ class _AdminSettingPageState extends State<AdminSettingPage> {
           ),
           actions: [
             TextButton(
-              onPressed: () async {
+              onPressed: () {
                 Navigator.pop(ctx);
-                await insertNewPeak(weekDay, startHour, endHour, washerMax, dryerMax);
+                washerMaxCtrl.clear();
+                dryerMaxCtrl.clear();
+                setState(() {
+                  selectedWeekIndex = -1;
+                  selectedTimeIndex = -1;
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text("Peak-hour setting saved successfully."),
+                  ),
+                );
               },
               child: const Text("Yes"),
             ),
@@ -1330,32 +1340,6 @@ class _AdminSettingPageState extends State<AdminSettingPage> {
           ],
         ),
       );
-    }
-  }
-
-  // Insert new peak-hour rule
-  Future<void> insertNewPeak(int weekDay, int startHour, int endHour, int washerMax, int dryerMax) async {
-    String url = "https://laundrypulse-gf1v.onrender.com/api/admin/peak-setting";
-    final res = await http.post(
-      Uri.parse(url),
-      headers: {"Content-Type": "application/json"},
-      body: jsonEncode({
-        "week_day": weekDay,
-        "start_hour": startHour,
-        "end_hour": endHour,
-        "washer_max": washerMax,
-        "dryer_max": dryerMax,
-      }),
-    );
-    var result = jsonDecode(res.body);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result["message"])));
-      washerMaxCtrl.clear();
-      dryerMaxCtrl.clear();
-      setState(() {
-        selectedWeekIndex = -1;
-        selectedTimeIndex = -1;
-      });
     }
   }
 
@@ -1423,7 +1407,7 @@ class _AdminSettingPageState extends State<AdminSettingPage> {
 
             const SizedBox(height: 18),
 
-            const Text("Select 2‑hour time slot"),
+            const Text("Select 2-hour time slot"),
             const SizedBox(height: 8),
             DropdownButtonFormField<int>(
               value: selectedTimeIndex == -1 ? null : selectedTimeIndex,
