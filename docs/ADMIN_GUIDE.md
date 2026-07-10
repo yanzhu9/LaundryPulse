@@ -126,8 +126,16 @@ Each section has a **Show More / Show Less** toggle.
 ![Admin usage analytics](screenshots/admin_usage.png)
 
 > If there's no booking data before last Sunday, the charts show *"No booking records before last Sunday."*
-
 ---
+
+- **Setting Page** — configure and activate **peak‑hour policies**.
+
+  Admins can enable peak‑hour rules by specifying a weekday, 2‑hour time window, and setting upper queue limits for washers and dryers. Two constraints apply within peak hours:
+
+  1. Users are prohibited from queuing for the same machine type until their ongoing laundry of washer or dryer finishes. This rule does not apply during off‑peak time.
+  2. Once the waiting queue hits the preset maximum number, subsequent queue requests will be blocked automatically.
+
+![Peak‑hour Setting Page](screenshots/admin_peak_setting.png)
 
 ## 7. Notes & Known Limitations
 
@@ -136,7 +144,6 @@ Each section has a **Show More / Show Less** toggle.
   `https://laundrypulse.onrender.com` (admin shutdown/restore actions, fault list, mark-fixed).
   If admin actions or fault reports appear to fail while the rest of the app works, confirm **both** services are up. Unifying these into one base URL is a known cleanup item.
 - **Simulated hardware:** machine and locker status changes are driven by app actions, not physical sensors. In a real deployment, IoT sensors would replace the manual buttons.
-- **Settings page** is a placeholder with no options yet.
 - **Admin provisioning** is done in the backend/database; there's no in-app admin-management UI.
 
 ---
