@@ -289,6 +289,26 @@ app.get('/api/admin/lockers', async (req, res) => {
   res.send(data);
 });
 
+// Check if the current time is within any active peak-hour period, and return the corresponding configuration if so.
+const checkCurrentPeakHour = async () => {
+  const now = new Date();
+  const weekDayNum = now.getDay(); // 0=Sunday, 1=Monday ~ 6=Saturday, corresponding to your frontend weekList: 1=Monday
+  const currentHour = now.getHours();
+
+  const { data: peakList } = await supabase
+    .from("Peak_Hour_Setting")
+    .select("week_day, start_hour, end_hour, washer_max, dryer_max")
+    .eq("week_day", weekDayNum)
+    .eq("is_active", true);
+
+  for (const item of peakList) {
+    if (currentHour >= item.start_hour && currentHour < item.end_hour) {
+      return item; // Current time is within this peak hour period, return the configuration
+    }
+  }
+  return null; // Not within any peak hour period
+};
+
 app.post("/api/queue-book", async (req, res) => {
   try {
     const { user_id, type } = req.body;
@@ -299,8 +319,8 @@ app.post("/api/queue-book", async (req, res) => {
     const PICKUP_GRACE = 15;
     const cycleBase = type === "washer" ? WASHER_CYCLE : DRYER_CYCLE;
     // Estimated total time for one machine cycle including pickup grace, used for calculating queue wait time when no machines are currently available
-    const fullMachineDuration = type === "washer" 
-      ? (15 + WASHER_CYCLE + PICKUP_GRACE) 
+    const fullMachineDuration = type === "washer"
+      ? (15 + WASHER_CYCLE + PICKUP_GRACE)
       : (15 + DRYER_CYCLE + PICKUP_GRACE);
 
     // 1. Credit score check: if user's credit_score < 15 → reject booking request, no queuing allowed
@@ -336,7 +356,43 @@ app.post("/api/queue-book", async (req, res) => {
         message: "All machines of this type are overdue. You can only use machines by helping others collect clothes."
       });
     }
-    
+
+    const peakInfo = await checkCurrentPeakHour();
+    if (peakInfo) {
+      // Currently within a peak hour period
+
+      // Validation 1: User has pending tasks (waiting / using) for this machine type, prevent queuing
+      const { data: userExistBooking } = await supabase
+        .from("Booking_Table")
+        .select("booking_status")
+        .eq("user_id", user_id)
+        .eq("machine_type", type)
+        .in("booking_status", ["waiting", "using"])
+        .limit(1);
+
+      if (userExistBooking.length > 0) {
+        return res.json({
+          success: false,
+          message: "During peak hours, you can only queue for this machine type after your previous laundry is finished."
+        });
+      }
+
+      // Validation 2: Current queue count has reached the limit
+      const limitNum = type === "washer" ? peakInfo.washer_max : peakInfo.dryer_max;
+      const { count: currentQueueCount } = await supabase
+        .from("Booking_Table")
+        .select("*", { count: "exact", head: true })
+        .eq("machine_type", type)
+        .eq("booking_status", "waiting")
+        .is("machine_id", null);
+
+      if (currentQueueCount >= limitNum) {
+        return res.json({
+          success: false,
+          message: "Peak-hour queue limit reached, please try again later."
+        });
+      }
+    }
     // 2. Try to find an available machine of the requested type. If found, allocate it immediately and set reserved_end_at = now + 15 min
     const { data: availableMachines } = await supabase
       .from("Machine_Table")
@@ -440,7 +496,7 @@ app.post("/api/queue-book", async (req, res) => {
       success: true,
       message: `No available machine, added to global ${type} queue. Estimated wait time: ${estimatedWaitMin} min (${queuePeopleCount} people ahead of you)`,
       estimated_wait_min: estimatedWaitMin,
-      queue_ahead_count: queuePeopleCount 
+      queue_ahead_count: queuePeopleCount
     });
 
   } catch (err) {
