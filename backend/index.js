@@ -409,6 +409,7 @@ app.post("/api/queue-book", async (req, res) => {
         {
           user_id: user_id,
           machine_id: targetMachine.machine_id,
+          machine_type: type,
           booking_status: "using"
         }
       ]);
