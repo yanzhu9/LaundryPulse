@@ -1670,7 +1670,7 @@ async function computeHeatmapStats() {
     const { data: usageLogRecords, error: usageLogErr } = await supabase
       .from("Usage_Log_Table")
       .select("machine_type, mode_min")
-      .lte("created_at", cutoffTime.toISOString());
+      .lte("used_at", cutoffTime.toISOString());
 
     if (usageLogErr) throw new Error("Usage_Log_Table query fail: " + usageLogErr.message);
 
@@ -1678,7 +1678,7 @@ async function computeHeatmapStats() {
     let totalDryerMins = 0;
     // Sum the total minutes for each machine type
     usageLogRecords.forEach(logItem => {
-      const singleMin = Number(logItem.mod_min ?? 0);
+      const singleMin = Number(logItem.mode_min ?? 0);
       if (logItem.machine_type === "washer") {
         totalWasherMins += singleMin;
       } else if (logItem.machine_type === "dryer") {
