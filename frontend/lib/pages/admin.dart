@@ -786,7 +786,7 @@ class MachineUtilItem {
   final double utilRate; 
   MachineUtilItem({required this.machineType, required this.utilRate});
 
-  String get displayName => machineType == "washer" ? "Washing Machine" : "Dryer";
+  String get displayName => machineType == "washer" ? "Washer" : "Dryer";
 }
 
 // Usage Tab
