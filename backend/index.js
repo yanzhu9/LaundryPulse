@@ -1720,7 +1720,8 @@ async function computeHeatmapStats() {
  */
 async function getCachedHeatmapStats() {
   const currentTime = new Date();
-  if (heatmapCache.data && heatmapCache.refreshDeadline && currentTime < new Date(heatmapCache.refreshDeadline)) {
+  const forceRefresh = true;
+  if (!forceRefresh && heatmapCache.data && heatmapCache.refreshDeadline && currentTime < new Date(heatmapCache.refreshDeadline)) {
     return heatmapCache.data;
   }
   const finalResponse = await computeHeatmapStats();
