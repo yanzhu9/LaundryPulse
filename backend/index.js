@@ -1532,26 +1532,6 @@ function getNextMondayMidnight() {
 }
 
 /**
- * Get the next Monday at 00:00:00.000 as the refresh deadline for heatmap stats
- */
-function getNextMondayMidnight() {
-  try {
-    const now = new Date();
-    const day = now.getDay();
-    const addDays = day === 0 ? 1 : 8 - day;
-    const nextMon = new Date(now);
-    nextMon.setDate(now.getDate() + addDays);
-    nextMon.setHours(0, 0, 0, 0);
-    return nextMon;
-  } catch (err) {
-    // If any error occurs, fallback to 7 days from now
-    const fallback = new Date();
-    fallback.setDate(fallback.getDate() + 7);
-    return fallback;
-  }
-}
-
-/**
  * Get the weekday name from a Date object, e.g., "Monday", "Tuesday", etc.
  */
 function getWeekdayName(dateObj) {
