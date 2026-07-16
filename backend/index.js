@@ -2578,36 +2578,18 @@ app.post("/api/admin/peak-setting", async (req, res) => {
       }
     ]);
 
-    const sendPeakInsertNotice = async () => {
-      const { data: allUsers, error: userErr } = await supabase
-      .from("User_Table")
-      .select("fcm_token")
-      .eq("role", "user")
-      .not("fcm_token", "is", null);
+    const { data: userList } = await supabase
+        .from("User_Table")
+        .select("fcm_token")
+        .eq("role", "user")
+        .not("fcm_token", "is", null);
 
-      if(userErr || !allUsers || allUsers.length === 0){
-        console.log("User query error or empty user list", userErr);
-        return;
-      }
+    const title = "Peak Hour Notification";
+    const bodyText = "This time slot is marked as peak hour by administrator. Washer queue limit: " + washer_max + ", Dryer queue limit: " + dryer_max + ". You can only join queue for same machine type after previous usage finished.";
 
-      const pushTitle = "Peak Hour Notification";
-      const pushBody = "This time slot is marked as peak hour by administrator. Washer queue limit: " + washer_max + ", Dryer queue limit: " + dryer_max + ". Under this rule, you can only join the queue for the same machine after the previous task is finished.";
-
-      for (const user of allUsers) {
-        try {
-          await admin.messaging().send({
-              token: user.fcm_token,
-              notification: { title: pushTitle, body: pushBody },
-              android: { priority: "high" }
-          });
-          console.log("Notification sent successfully");
-        } catch (e) {
-            console.log("Push skipped:", e.message);
-        }
-      }
-    };
-
-    await sendPeakInsertNotice();
+    for(let item of userList){
+      await sendNotification(item.fcm_token, title, bodyText);
+    }
 
     res.json({ success: true, action: "insert", message: "Peak-hour setting saved successfully." });
   } catch (err) {
@@ -2623,32 +2605,22 @@ app.post("/api/admin/peak-setting", async (req, res) => {
         }
       ]);
 
-      const { data: allUsers, error: userErr } = await supabase
-      .from("User_Table")
-      .select("fcm_token")
-      .eq("role", "user")
-      .not("fcm_token", "is", null);
+      const { data: userList } = await supabase
+          .from("User_Table")
+          .select("fcm_token")
+          .eq("role", "user")
+          .not("fcm_token", "is", null);
 
-      if(!userErr && allUsers?.length > 0){
-        const pushTitle = "Peak Hour Notification";
-        const pushBody = "This time slot is marked as peak hour by administrator. Washer queue limit: " + washer_max + ", Dryer queue limit: " + dryer_max + ". Under this rule, you can only join the queue for the same machine after the previous task is finished.";
-        for (const user of allUsers) {
-          try {
-            await admin.messaging().send({
-                token: user.fcm_token,
-                notification: { title: pushTitle, body: pushBody },
-                android: { priority: "high" }
-            });
-            console.log("Notification sent in conflict branch");
-          } catch (e) {
-              console.log("Push skipped:", e.message);
-          }
-        }
+      const title = "Peak Hour Notification";
+      const bodyText = "This time slot is marked as peak hour by administrator. Washer queue limit: " + req.body.washer_max + ", Dryer queue limit: " + req.body.dryer_max + ". You can only join queue for same machine type after previous usage finished.";
+
+      for(let item of userList){
+        await sendNotification(item.fcm_token, title, bodyText);
       }
 
       return res.json({ success: true, action: "insert", message: "Peak-hour setting saved successfully." });
     }
-    console.log("Global catch error:", err);
+    console.log(err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -2663,40 +2635,22 @@ app.post("/api/admin/update-peak-limit", async (req, res) => {
       .eq("week_day", week_day)
       .eq("start_hour", start_hour);
 
-    const { data: allUsers, error: userErr } = await supabase
-      .from("User_Table")
-      .select("fcm_token")
-      .eq("role", "user")
-      .not("fcm_token", "is", null);
+    const { data: userList } = await supabase
+        .from("User_Table")
+        .select("fcm_token")
+        .eq("role", "user")
+        .not("fcm_token", "is", null);
 
-    if(userErr){
-      console.log("User table query error:", userErr);
-      return res.json({ success: true, message: "Update completed, notification query failed" });
-    }
-    if(!allUsers || allUsers.length === 0){
-      console.log("No available user fcm tokens");
-      return res.json({ success: true, message: "Peak-hour limits updated successfully." });
-    }
+    const title = "Peak Hour Rule Updated";
+    const bodyText = "Administrator adjusted peak setting based on heatmap. New washer limit: " + washer_max + ", dryer limit: " + dryer_max + ".";
 
-    const pushTitle = "Peak Hour Rule Updated";
-    const pushBody = "Administrator adjusted the peak hour rule based on usage heatmap. New washer queue limit: " + washer_max + ", Dryer queue limit: " + dryer_max + ".";
-
-    for (const user of allUsers) {
-        try {
-            await admin.messaging().send({
-                token: user.fcm_token,
-                notification: { title: pushTitle, body: pushBody },
-                android: { priority: "high" }
-            });
-            console.log("Update notification sent successfully");
-        } catch (e) {
-            console.log("Push skipped:", e.message);
-        }
+    for(let item of userList){
+      await sendNotification(item.fcm_token, title, bodyText);
     }
 
     res.json({ success: true, message: "Peak-hour limits updated successfully." });
   }catch(err){
-    console.log("Global exception in update api:", err);
+    console.log(err);
     res.status(500).json({error: err.message});
   }
 });
