@@ -1115,6 +1115,13 @@ setInterval(async () => {
     );
 
     if (!hasValidMachine) {
+      const { data: waitingUserList } = await supabase
+        .from("Booking_Table")
+        .select("user_id")
+        .eq("machine_type", m.machine_type)
+        .eq("booking_status", "waiting")
+        .is("machine_id", null);
+      
       const notifyTitle = "Queue Cancelled";
       const notifyBody = "All machines of this type are either overdue or out of service. Your queue position has expired. You can help collect laundry to continue to use these machines.";
 
