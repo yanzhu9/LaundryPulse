@@ -341,19 +341,20 @@ app.post("/api/queue-book", async (req, res) => {
       });
     }
 
-    // Check if all machines of this type are overdue. If so, reject the booking request and inform the user that they can only use machines by helping others collect clothes.
+    // Check if there are any machines of this type that are either available or currently occupied (not overdue or out of service). If all machines are overdue or out of service, reject the booking request.
     const { data: allTypeMachines } = await supabase
       .from("Machine_Table")
       .select("machine_status")
       .eq("machine_type", type);
+      
+    const hasValidMachine = allTypeMachines.some(m => 
+        m.machine_status === "available" || m.machine_status === "occupied"
+    );
 
-    // If all machines of this type are overdue, the user cannot join the queue and must help others collect clothes instead.
-    const allMachineOverdue = allTypeMachines.every(m => m.machine_status === "overdue");
-
-    if (allMachineOverdue) {
+    if (!hasValidMachine) {
       return res.json({
         success: false,
-        message: "All machines of this type are overdue. You can only use machines by helping others collect clothes."
+        message: "All machines of this type are either overdue or out of service. You cannot join the queue for this machine type at the moment."
       });
     }
 
@@ -1103,26 +1104,19 @@ setInterval(async () => {
     );
     console.log(`Machine ${m.machine_id} pickup expired → overdue`);
 
-     // Check if all machines of this type are overdue → if so, notify all waiting users that the queue is expired and they need to re-queue
+      // Query all machines of this type (washer/dryer) to see if any are still available or occupied. If none are valid, notify all waiting users that the queue is cancelled.
     const { data: allTypeMachines } = await supabase
       .from("Machine_Table")
       .select("machine_status")
       .eq("machine_type", m.machine_type);
 
-    const allMachineOverdue = allTypeMachines.every(item => item.machine_status === "overdue");
+    const hasValidMachine = allTypeMachines.some(item => 
+        item.machine_status === "available" || item.machine_status === "occupied"
+    );
 
-    if (allMachineOverdue) {
-      // 1、 Query all waiting users in the queue for this machine type (booking_status = "waiting", machine_id = null) → send them a notification that the queue is expired and they need to re-queue
-      const { data: waitingUserList } = await supabase
-        .from("Booking_Table")
-        .select("user_id")
-        .eq("machine_type", m.machine_type)
-        .eq("booking_status", "waiting")
-        .is("machine_id", null);
-
-      // 2、 Send notification to all waiting users that the queue is expired and they need to re-queue
+    if (!hasValidMachine) {
       const notifyTitle = "Queue Cancelled";
-      const notifyBody = "All machines are overdue. Your queue position has expired. Help collect clothes and you can continue to use the machine.";
+      const notifyBody = "All machines of this type are either overdue or out of service. Your queue position has expired. You can help collect laundry to continue to use these machines.";
 
       for (const userItem of waitingUserList) {
         try {
@@ -1132,7 +1126,7 @@ setInterval(async () => {
         }
       }
 
-      // 3、 Update all waiting queue records for this machine type (booking_status = "waiting", machine_id = null) → set booking_status = "expired" to clear the queue
+      // Clear all waiting queue records for this machine type (booking_status = "waiting", machine_id = null) → set booking_status = "expired"
       await supabase
         .from("Booking_Table")
         .update({ booking_status: "expired" })
@@ -1140,7 +1134,7 @@ setInterval(async () => {
         .eq("booking_status", "waiting")
         .is("machine_id", null);
 
-      console.log(`All ${m.machine_type} machines overdue, queue expired for all waiting users`);
+      console.log(`All ${m.machine_type} valid machines are unavailable, the entire waiting queue has been cleared`);
     } else {
       // Query all waiting users in the queue for this machine type (booking_status = "waiting", machine_id = null) → send them a notification that this machine is overdue and they may help collect clothes to unlock it
       const { data: waitingUserList } = await supabase
