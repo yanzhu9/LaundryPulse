@@ -2577,19 +2577,37 @@ app.post("/api/admin/peak-setting", async (req, res) => {
         is_active: true
       }
     ]);
-    
-    const userResult = await supabase
+
+    const { data: userList, error: userQueryErr } = await supabase
       .from("User_Table")
       .select("fcm_token")
-      .eq("role", "user")
-      .not("fcm_token", "is", null);
+      .not("fcm_token", "is", null)
+      .eq("role", "user");
 
-    const notifyTitle = "Peak Hour Notification";
-    const notifyBody = "This time slot is marked as peak hour by administrator. Washer queue limit: " + washer_max + ", Dryer queue limit: " + dryer_max + ". You can only join queue for same machine type after previous usage finished.";
+    if (userQueryErr) {
+      console.error("Fetch user fcm token error: ", userQueryErr);
+      return res.status(500).json({ message: "Setting saved, but notification send failed" });
+    }
 
-    if (userResult.data) {
-      for (const user of userResult.data) {
-        await sendNotification(user.fcm_token, notifyTitle, notifyBody);
+    const tokenArr = userList.map(item => item.fcm_token);
+    const pushPayload = {
+      notification: {
+        title: "Peak Hour Notification",
+        body: `This time slot has been set as peak hour by administrator. Washer queue limit: ${washer_max}, dryer queue limit: ${dryer_max}. Same type of machine can only be queued after the last usage completes.`
+      },
+      data: {
+        type: "peakHourCreate"
+      }
+    };
+
+    for (const singleToken of tokenArr) {
+      try {
+        await admin.messaging().send({
+          token: singleToken,
+          ...pushPayload
+        });
+      } catch (singlePushErr) {
+        console.warn(`Push failed for token ${singleToken}: `, singlePushErr.message);
       }
     }
 
@@ -2607,18 +2625,36 @@ app.post("/api/admin/peak-setting", async (req, res) => {
         }
       ]);
 
-      const userResult = await supabase
+      const { data: userList, error: userQueryErr } = await supabase
         .from("User_Table")
         .select("fcm_token")
-        .eq("role", "user")
-        .not("fcm_token", "is", null);
+        .not("fcm_token", "is", null)
+        .eq("role", "user");
 
-      const notifyTitle = "Peak Hour Notification";
-      const notifyBody = "This time slot is marked as peak hour by administrator. Washer queue limit: " + req.body.washer_max + ", Dryer queue limit: " + req.body.dryer_max + ". You can only join queue for same machine type after previous usage finished.";
+      if (userQueryErr) {
+        console.error("Fetch user fcm token error: ", userQueryErr);
+        return res.status(500).json({ message: "Setting saved, but notification send failed" });
+      }
 
-      if (userResult.data) {
-        for (const user of userResult.data) {
-          await sendNotification(user.fcm_token, notifyTitle, notifyBody);
+      const tokenArr = userList.map(item => item.fcm_token);
+      const pushPayload = {
+        notification: {
+          title: "Peak Hour Notification",
+          body: `This time slot has been set as peak hour by administrator. Washer queue limit: ${req.body.washer_max}, dryer queue limit: ${req.body.dryer_max}. Same type of machine can only be queued after the last usage completes.`
+        },
+        data: {
+          type: "peakHourCreate"
+        }
+      };
+
+      for (const singleToken of tokenArr) {
+        try {
+          await admin.messaging().send({
+            token: singleToken,
+            ...pushPayload
+          });
+        } catch (singlePushErr) {
+          console.warn(`Push failed for token ${singleToken}: `, singlePushErr.message);
         }
       }
 
@@ -2640,18 +2676,36 @@ app.post("/api/admin/update-peak-limit", async (req, res) => {
       .eq("week_day", week_day)
       .eq("start_hour", start_hour);
 
-    const userResult = await supabase
+    const { data: userList, error: userQueryErr } = await supabase
       .from("User_Table")
       .select("fcm_token")
-      .eq("role", "user")
-      .not("fcm_token", "is", null);
+      .not("fcm_token", "is", null)
+      .eq("role", "user");
 
-    const notifyTitle = "Peak Hour Rule Updated";
-    const notifyBody = "Administrator adjusted peak setting based on heatmap. New washer limit: " + washer_max + ", dryer limit: " + dryer_max + ".";
+    if (userQueryErr) {
+      console.error("Fetch user fcm token error: ", userQueryErr);
+      return res.status(500).json({ message: "Update succeeded, but notification send failed" });
+    }
 
-    if (userResult.data) {
-      for (const user of userResult.data) {
-        await sendNotification(user.fcm_token, notifyTitle, notifyBody);
+    const tokenArr = userList.map(item => item.fcm_token);
+    const pushPayload = {
+      notification: {
+        title: "Peak Hour Rule Updated",
+        body: `Administrator adjusted peak setting based on heatmap. New washer queue limit: ${washer_max}, dryer queue limit: ${dryer_max}.`
+      },
+      data: {
+        type: "peakHourUpdate"
+      }
+    };
+
+    for (const singleToken of tokenArr) {
+      try {
+        await admin.messaging().send({
+          token: singleToken,
+          ...pushPayload
+        });
+      } catch (singlePushErr) {
+        console.warn(`Push failed for token ${singleToken}: `, singlePushErr.message);
       }
     }
 
