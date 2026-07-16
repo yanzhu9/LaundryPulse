@@ -2020,6 +2020,46 @@ app.post("/api/create-fault-report", async (req, res) => {
 
     if (updateErr) throw new Error("Update device status failed: " + updateErr.message);
 
+    if (facilityType === "washer" || facilityType === "dryer") {
+      const { data: allTypeMachines } = await supabase
+        .from("Machine_Table")
+        .select("machine_status")
+        .eq("machine_type", facilityType);
+
+      // Check if there are any machines of this type that are still available or occupied
+      const hasValidMachine = allTypeMachines.some(item =>
+        item.machine_status === "available" || item.machine_status === "occupied"
+      );
+
+      if (!hasValidMachine) {
+        const { data: waitingUserList } = await supabase
+          .from("Booking_Table")
+          .select("user_id")
+          .eq("machine_type", facilityType)
+          .eq("booking_status", "waiting")
+          .is("machine_id", null);
+
+        const notifyTitle = "Queue Cancelled";
+        const notifyBody = "All machines of this type are either overdue or out of service. Your queue position has expired.";
+        for (const userItem of waitingUserList) {
+          try {
+            await sendNotification(userItem.user_id, notifyTitle, notifyBody);
+          } catch (pushErr) {
+            console.log(`Queue user ${userItem.user_id} push skipped`);
+          }
+        }
+
+        await supabase
+          .from("Booking_Table")
+          .update({ booking_status: "expired" })
+          .eq("machine_type", facilityType)
+          .eq("booking_status", "waiting")
+          .is("machine_id", null);
+
+        console.log(`All ${facilityType} valid machines are unavailable, the entire waiting queue has been cleared`);
+      }
+    }
+
     // 4. Push admin FCM notifications 
     const { data: adminList, error: adminErr } = await supabase
       .from("User_Table")
@@ -2030,23 +2070,23 @@ app.post("/api/create-fault-report", async (req, res) => {
     const adminTokens = adminList.map(item => item.fcm_token);
 
     if (adminInitialized && adminTokens.length > 0) {
-    for (const token of adminTokens) {
-    await admin.messaging().send({
-      token: token,
-      notification: {
-        title: "Equipment Fault Alert",
-        body: `[${facilityType} ${facilityNumber}] Fault: ${faultDesc.slice(0,70)}`
-      },
-      data: {
-        targetPage: "adminFaultList",
-        facilityNumber: facilityNumber
-      },
-      android: {
-        priority: "high"
+      for (const token of adminTokens) {
+        await admin.messaging().send({
+          token: token,
+          notification: {
+            title: "Equipment Fault Alert",
+            body: `[${facilityType} ${facilityNumber}] Fault: ${faultDesc.slice(0, 70)}`
+          },
+          data: {
+            targetPage: "adminFaultList",
+            facilityNumber: facilityNumber
+          },
+          android: {
+            priority: "high"
+          }
+        });
       }
-    });
-  }
-}
+    }
 
     return res.json({
       success: true,
@@ -2171,7 +2211,7 @@ app.post("/admin/machine/manualSetOutOfService", async (req, res) => {
 
     const { data: targetMachine, error: machineQueryErr } = await supabase
       .from("Machine_Table")
-      .select("machine_id, machine_status")
+      .select("machine_id, machine_status, machine_type")
       .eq("machine_id", machineId)
       .single();
 
@@ -2193,6 +2233,47 @@ app.post("/admin/machine/manualSetOutOfService", async (req, res) => {
       return res.status(500).json({ message: "Failed to update machine status" });
     }
 
+    const machineType = targetMachine.machine_type;
+    if (machineType === "washer" || machineType === "dryer") {
+      const { data: allTypeMachines } = await supabase
+        .from("Machine_Table")
+        .select("machine_status")
+        .eq("machine_type", machineType);
+
+      const hasValidMachine = allTypeMachines.some(item =>
+        item.machine_status === "available" || item.machine_status === "occupied"
+      );
+
+      if (!hasValidMachine) {
+        const { data: waitingUserList } = await supabase
+          .from("Booking_Table")
+          .select("user_id")
+          .eq("machine_type", machineType)
+          .eq("booking_status", "waiting")
+          .is("machine_id", null);
+
+        const notifyTitle = "Queue Cancelled";
+        const notifyBody = "All machines of this type are either overdue or out of service. Your queue position has expired. You can help collect laundry to gain access to these machines.";
+
+        for (const userItem of waitingUserList) {
+          try {
+            await sendNotification(userItem.user_id, notifyTitle, notifyBody);
+          } catch (pushErr) {
+            console.log(`Queue user ${userItem.user_id} push skipped`);
+          }
+        }
+
+        await supabase
+          .from("Booking_Table")
+          .update({ booking_status: "expired" })
+          .eq("machine_type", machineType)
+          .eq("booking_status", "waiting")
+          .is("machine_id", null);
+
+        console.log(`All ${machineType} valid machines are unavailable, the entire waiting queue has been cleared`);
+      }
+    }
+    
     const { data: userList, error: userQueryErr } = await supabase
       .from("User_Table")
       .select("fcm_token")
