@@ -2542,7 +2542,6 @@ app.post("/api/admin/peak-setting", async (req, res) => {
   try {
     const { week_day, start_hour, end_hour, washer_max, dryer_max } = req.body;
 
-    // check if the peak-hour setting for the given week_day and start_hour already exists
     const { data: existRecord } = await supabase
       .from("Peak_Hour_Setting")
       .select("id, washer_max, dryer_max")
@@ -2550,9 +2549,7 @@ app.post("/api/admin/peak-setting", async (req, res) => {
       .eq("start_hour", start_hour)
       .single();
 
-    // if existRecord is found, check if the new values are the same as the existing ones
     if(existRecord){
-      // If the values are the same, return a response indicating that the setting is identical
       if(existRecord.washer_max === washer_max && existRecord.dryer_max === dryer_max){
         return res.json({
           success: false,
@@ -2560,7 +2557,6 @@ app.post("/api/admin/peak-setting", async (req, res) => {
           message: "The peak-hour setting is identical to existing data."
         });
       }else{
-        // If the values are different, update the existing record with the new values
         return res.json({
           success: false,
           action: "update",
@@ -2571,7 +2567,6 @@ app.post("/api/admin/peak-setting", async (req, res) => {
       }
     }
 
-    // If no existing record is found, insert a new peak-hour setting
     await supabase.from("Peak_Hour_Setting").insert([
       {
         week_day: week_day,
@@ -2583,34 +2578,39 @@ app.post("/api/admin/peak-setting", async (req, res) => {
       }
     ]);
 
-    const { data: userList, error: userQueryErr } = await supabase
-    .from("User_Table")
-    .select("fcm_token")
-    .eq("role", "user")
-    .not("fcm_token", "is", null);
+    const sendPeakInsertNotice = async () => {
+      const { data: allUsers, error: userErr } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .eq("role", "user")
+      .not("fcm_token", "is", null);
 
-if (!userQueryErr && userList && userList.length > 0) {
-    for (const userItem of userList) {
+      if(userErr || !allUsers || allUsers.length === 0){
+        console.log("User query error or empty user list", userErr);
+        return;
+      }
+
+      const pushTitle = "Peak Hour Notification";
+      const pushBody = "This time slot is marked as peak hour by administrator. Washer queue limit: " + washer_max + ", Dryer queue limit: " + dryer_max + ". Under this rule, you can only join the queue for the same machine after the previous task is finished.";
+
+      for (const user of allUsers) {
         try {
-            await admin.messaging().send({
-                token: userItem.fcm_token,
-                notification: {
-                    title: "Peak Hour Notification",
-                    body: `This time period has been set as peak hour. Washer queue limit: ${washer_max}, Dryer queue limit: ${dryer_max}. You can only join queue for same machine type after previous usage finished.`
-                },
-                android: {
-                    priority: "high"
-                }
-            });
-        } catch (singlePushErr) {
-            console.warn("Push failed: ", singlePushErr.message);
+          await admin.messaging().send({
+              token: user.fcm_token,
+              notification: { title: pushTitle, body: pushBody },
+              android: { priority: "high" }
+          });
+          console.log("Notification sent successfully");
+        } catch (e) {
+            console.log("Push skipped:", e.message);
         }
-    }
-}
+      }
+    };
+
+    await sendPeakInsertNotice();
 
     res.json({ success: true, action: "insert", message: "Peak-hour setting saved successfully." });
   } catch (err) {
-    // Handle the specific error code for unique constraint violation (PGRST116)
     if(err.code === "PGRST116"){
       await supabase.from("Peak_Hour_Setting").insert([
         {
@@ -2622,47 +2622,83 @@ if (!userQueryErr && userList && userList.length > 0) {
           is_active: true
         }
       ]);
+
+      const { data: allUsers, error: userErr } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .eq("role", "user")
+      .not("fcm_token", "is", null);
+
+      if(!userErr && allUsers?.length > 0){
+        const pushTitle = "Peak Hour Notification";
+        const pushBody = "This time slot is marked as peak hour by administrator. Washer queue limit: " + washer_max + ", Dryer queue limit: " + dryer_max + ". Under this rule, you can only join the queue for the same machine after the previous task is finished.";
+        for (const user of allUsers) {
+          try {
+            await admin.messaging().send({
+                token: user.fcm_token,
+                notification: { title: pushTitle, body: pushBody },
+                android: { priority: "high" }
+            });
+            console.log("Notification sent in conflict branch");
+          } catch (e) {
+              console.log("Push skipped:", e.message);
+          }
+        }
+      }
+
       return res.json({ success: true, action: "insert", message: "Peak-hour setting saved successfully." });
     }
+    console.log("Global catch error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // POST /api/admin/update-peak-limit
 app.post("/api/admin/update-peak-limit", async (req, res) => {
-  const { week_day, start_hour, washer_max, dryer_max } = req.body;
-  await supabase
-    .from("Peak_Hour_Setting")
-    .update({ washer_max: washer_max, dryer_max: dryer_max })
-    .eq("week_day", week_day)
-    .eq("start_hour", start_hour);
+  try{
+    const { week_day, start_hour, washer_max, dryer_max } = req.body;
+    await supabase
+      .from("Peak_Hour_Setting")
+      .update({ washer_max: washer_max, dryer_max: dryer_max })
+      .eq("week_day", week_day)
+      .eq("start_hour", start_hour);
 
-  const { data: userList, error: userQueryErr } = await supabase
-    .from("User_Table")
-    .select("fcm_token")
-    .eq("role", "user")
-    .not("fcm_token", "is", null);
+    const { data: allUsers, error: userErr } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .eq("role", "user")
+      .not("fcm_token", "is", null);
 
-if (!userQueryErr && userList && userList.length > 0) {
-    for (const userItem of userList) {
+    if(userErr){
+      console.log("User table query error:", userErr);
+      return res.json({ success: true, message: "Update completed, notification query failed" });
+    }
+    if(!allUsers || allUsers.length === 0){
+      console.log("No available user fcm tokens");
+      return res.json({ success: true, message: "Peak-hour limits updated successfully." });
+    }
+
+    const pushTitle = "Peak Hour Rule Updated";
+    const pushBody = "Administrator adjusted the peak hour rule based on usage heatmap. New washer queue limit: " + washer_max + ", Dryer queue limit: " + dryer_max + ".";
+
+    for (const user of allUsers) {
         try {
             await admin.messaging().send({
-                token: userItem.fcm_token,
-                notification: {
-                    title: "Peak Hour Rule Updated",
-                    body: `Administrator adjusted peak setting based on heatmap. New washer limit: ${washer_max}, dryer limit: ${dryer_max}.`
-                },
-                android: {
-                    priority: "high"
-                }
+                token: user.fcm_token,
+                notification: { title: pushTitle, body: pushBody },
+                android: { priority: "high" }
             });
-        } catch (singlePushErr) {
-            console.warn("Push failed: ", singlePushErr.message);
+            console.log("Update notification sent successfully");
+        } catch (e) {
+            console.log("Push skipped:", e.message);
         }
     }
-}
 
-  res.json({ success: true, message: "Peak-hour limits updated successfully." });
+    res.json({ success: true, message: "Peak-hour limits updated successfully." });
+  }catch(err){
+    console.log("Global exception in update api:", err);
+    res.status(500).json({error: err.message});
+  }
 });
 
 // test endpoint to verify backend and database connection
