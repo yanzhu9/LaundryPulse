@@ -2253,7 +2253,7 @@ app.post("/admin/machine/manualSetOutOfService", async (req, res) => {
           .is("machine_id", null);
 
         const notifyTitle = "Queue Cancelled";
-        const notifyBody = "All machines of this type are either overdue or out of service. Your queue position has expired. You can help collect laundry to gain access to these machines.";
+        const notifyBody = "All machines of this type are either overdue or out of service. Your queue position has expired.";
 
         for (const userItem of waitingUserList) {
           try {
