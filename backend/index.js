@@ -2583,6 +2583,27 @@ app.post("/api/admin/peak-setting", async (req, res) => {
       }
     ]);
 
+    const { data: allUsers, error: userErr } = await supabase
+    .from("User_Table")
+    .select("fcm_token")
+    .eq("role", "user")
+    .not("fcm_token", "is", null);
+
+    const pushTitle = "Peak Hour Notification";
+    const pushBody = "This time slot is marked as peak hour by administrator. Washer queue limit: " + washer_max + ", Dryer queue limit: " + dryer_max + ". Under this rule, you can only join the queue for the same machine after the previous task is finished.";
+
+    for (const user of allUsers) {
+        try {
+            await admin.messaging().send({
+                token: user.fcm_token,
+                notification: { title: pushTitle, body: pushBody },
+               android: { priority: "high" }
+            });
+       } catch (e) {
+           console.log("Push skip");
+       }
+    }
+
     res.json({ success: true, action: "insert", message: "Peak-hour setting saved successfully." });
   } catch (err) {
     // Handle the specific error code for unique constraint violation (PGRST116)
@@ -2611,6 +2632,27 @@ app.post("/api/admin/update-peak-limit", async (req, res) => {
     .update({ washer_max: washer_max, dryer_max: dryer_max })
     .eq("week_day", week_day)
     .eq("start_hour", start_hour);
+
+  const { data: allUsers, error: userErr } = await supabase
+    .from("User_Table")
+    .select("fcm_token")
+    .eq("role", "user")
+    .not("fcm_token", "is", null);
+
+  const pushTitle = "Peak Hour Notification";
+  const pushBody = "This time slot is marked as peak hour by administrator. Washer queue limit: " + washer_max + ", Dryer queue limit: " + dryer_max + ".";
+
+  for (const user of allUsers) {
+      try {
+          await admin.messaging().send({
+              token: user.fcm_token,
+              notification: { title: pushTitle, body: pushBody },
+              android: { priority: "high" }
+        });
+      } catch (e) {
+          console.log("Push skip");
+      }
+  }
 
   res.json({ success: true, message: "Peak-hour limits updated successfully." });
 });
