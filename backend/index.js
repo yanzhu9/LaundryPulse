@@ -2542,6 +2542,7 @@ app.post("/api/admin/peak-setting", async (req, res) => {
   try {
     const { week_day, start_hour, end_hour, washer_max, dryer_max } = req.body;
 
+    // check if the peak-hour setting for the given week_day and start_hour already exists
     const { data: existRecord } = await supabase
       .from("Peak_Hour_Setting")
       .select("id, washer_max, dryer_max")
@@ -2549,7 +2550,9 @@ app.post("/api/admin/peak-setting", async (req, res) => {
       .eq("start_hour", start_hour)
       .single();
 
+    // if existRecord is found, check if the new values are the same as the existing ones
     if(existRecord){
+      // If the values are the same, return a response indicating that the setting is identical
       if(existRecord.washer_max === washer_max && existRecord.dryer_max === dryer_max){
         return res.json({
           success: false,
@@ -2557,6 +2560,7 @@ app.post("/api/admin/peak-setting", async (req, res) => {
           message: "The peak-hour setting is identical to existing data."
         });
       }else{
+        // If the values are different, update the existing record with the new values
         return res.json({
           success: false,
           action: "update",
@@ -2567,6 +2571,7 @@ app.post("/api/admin/peak-setting", async (req, res) => {
       }
     }
 
+    // If no existing record is found, insert a new peak-hour setting
     await supabase.from("Peak_Hour_Setting").insert([
       {
         week_day: week_day,
@@ -2578,41 +2583,9 @@ app.post("/api/admin/peak-setting", async (req, res) => {
       }
     ]);
 
-    const { data: userList, error: userQueryErr } = await supabase
-      .from("User_Table")
-      .select("fcm_token")
-      .not("fcm_token", "is", null)
-      .eq("role", "user");
-
-    if (userQueryErr) {
-      console.error("Fetch user fcm token error: ", userQueryErr);
-      return res.status(500).json({ message: "Setting saved, but notification send failed" });
-    }
-
-    const tokenArr = userList.map(item => item.fcm_token);
-    const pushPayload = {
-      notification: {
-        title: "Peak Hour Notification",
-        body: `This time slot has been set as peak hour by administrator. Washer queue limit: ${washer_max}, dryer queue limit: ${dryer_max}. Same type of machine can only be queued after the last usage completes.`
-      },
-      data: {
-        type: "peakHourCreate"
-      }
-    };
-
-    for (const singleToken of tokenArr) {
-      try {
-        await admin.messaging().send({
-          token: singleToken,
-          ...pushPayload
-        });
-      } catch (singlePushErr) {
-        console.warn(`Push failed for token ${singleToken}: `, singlePushErr.message);
-      }
-    }
-
     res.json({ success: true, action: "insert", message: "Peak-hour setting saved successfully." });
   } catch (err) {
+    // Handle the specific error code for unique constraint violation (PGRST116)
     if(err.code === "PGRST116"){
       await supabase.from("Peak_Hour_Setting").insert([
         {
@@ -2624,96 +2597,22 @@ app.post("/api/admin/peak-setting", async (req, res) => {
           is_active: true
         }
       ]);
-
-      const { data: userList, error: userQueryErr } = await supabase
-        .from("User_Table")
-        .select("fcm_token")
-        .not("fcm_token", "is", null)
-        .eq("role", "user");
-
-      if (userQueryErr) {
-        console.error("Fetch user fcm token error: ", userQueryErr);
-        return res.status(500).json({ message: "Setting saved, but notification send failed" });
-      }
-
-      const tokenArr = userList.map(item => item.fcm_token);
-      const pushPayload = {
-        notification: {
-          title: "Peak Hour Notification",
-          body: `This time slot has been set as peak hour by administrator. Washer queue limit: ${req.body.washer_max}, dryer queue limit: ${req.body.dryer_max}. Same type of machine can only be queued after the last usage completes.`
-        },
-        data: {
-          type: "peakHourCreate"
-        }
-      };
-
-      for (const singleToken of tokenArr) {
-        try {
-          await admin.messaging().send({
-            token: singleToken,
-            ...pushPayload
-          });
-        } catch (singlePushErr) {
-          console.warn(`Push failed for token ${singleToken}: `, singlePushErr.message);
-        }
-      }
-
       return res.json({ success: true, action: "insert", message: "Peak-hour setting saved successfully." });
     }
-    console.log(err);
     res.status(500).json({ error: err.message });
   }
 });
 
 // POST /api/admin/update-peak-limit
 app.post("/api/admin/update-peak-limit", async (req, res) => {
-  try{
-    const { week_day, start_hour, washer_max, dryer_max } = req.body;
+  const { week_day, start_hour, washer_max, dryer_max } = req.body;
+  await supabase
+    .from("Peak_Hour_Setting")
+    .update({ washer_max: washer_max, dryer_max: dryer_max })
+    .eq("week_day", week_day)
+    .eq("start_hour", start_hour);
 
-    await supabase
-      .from("Peak_Hour_Setting")
-      .update({ washer_max: washer_max, dryer_max: dryer_max })
-      .eq("week_day", week_day)
-      .eq("start_hour", start_hour);
-
-    const { data: userList, error: userQueryErr } = await supabase
-      .from("User_Table")
-      .select("fcm_token")
-      .not("fcm_token", "is", null)
-      .eq("role", "user");
-
-    if (userQueryErr) {
-      console.error("Fetch user fcm token error: ", userQueryErr);
-      return res.status(500).json({ message: "Update succeeded, but notification send failed" });
-    }
-
-    const tokenArr = userList.map(item => item.fcm_token);
-    const pushPayload = {
-      notification: {
-        title: "Peak Hour Rule Updated",
-        body: `Administrator adjusted peak setting based on heatmap. New washer queue limit: ${washer_max}, dryer queue limit: ${dryer_max}.`
-      },
-      data: {
-        type: "peakHourUpdate"
-      }
-    };
-
-    for (const singleToken of tokenArr) {
-      try {
-        await admin.messaging().send({
-          token: singleToken,
-          ...pushPayload
-        });
-      } catch (singlePushErr) {
-        console.warn(`Push failed for token ${singleToken}: `, singlePushErr.message);
-      }
-    }
-
-    res.json({ success: true, message: "Peak-hour limits updated successfully." });
-  }catch(err){
-    console.log(err);
-    res.status(500).json({error: err.message});
-  }
+  res.json({ success: true, message: "Peak-hour limits updated successfully." });
 });
 
 // test endpoint to verify backend and database connection
