@@ -2583,26 +2583,30 @@ app.post("/api/admin/peak-setting", async (req, res) => {
       }
     ]);
 
-    const { data: allUsers, error: userErr } = await supabase
+    const { data: userList, error: userQueryErr } = await supabase
     .from("User_Table")
     .select("fcm_token")
     .eq("role", "user")
     .not("fcm_token", "is", null);
 
-    const pushTitle = "Peak Hour Notification";
-    const pushBody = "This time slot is marked as peak hour by administrator. Washer queue limit: " + washer_max + ", Dryer queue limit: " + dryer_max + ". Under this rule, you can only join the queue for the same machine after the previous task is finished.";
-
-    for (const user of allUsers) {
+if (!userQueryErr && userList && userList.length > 0) {
+    for (const userItem of userList) {
         try {
             await admin.messaging().send({
-                token: user.fcm_token,
-                notification: { title: pushTitle, body: pushBody },
-               android: { priority: "high" }
+                token: userItem.fcm_token,
+                notification: {
+                    title: "Peak Hour Notification",
+                    body: `This time period has been set as peak hour. Washer queue limit: ${washer_max}, Dryer queue limit: ${dryer_max}. You can only join queue for same machine type after previous usage finished.`
+                },
+                android: {
+                    priority: "high"
+                }
             });
-       } catch (e) {
-           console.log("Push skip");
-       }
+        } catch (singlePushErr) {
+            console.warn("Push failed: ", singlePushErr.message);
+        }
     }
+}
 
     res.json({ success: true, action: "insert", message: "Peak-hour setting saved successfully." });
   } catch (err) {
@@ -2633,26 +2637,30 @@ app.post("/api/admin/update-peak-limit", async (req, res) => {
     .eq("week_day", week_day)
     .eq("start_hour", start_hour);
 
-  const { data: allUsers, error: userErr } = await supabase
+  const { data: userList, error: userQueryErr } = await supabase
     .from("User_Table")
     .select("fcm_token")
     .eq("role", "user")
     .not("fcm_token", "is", null);
 
-  const pushTitle = "Peak Hour Notification";
-  const pushBody = "This time slot is marked as peak hour by administrator. Washer queue limit: " + washer_max + ", Dryer queue limit: " + dryer_max + ".";
-
-  for (const user of allUsers) {
-      try {
-          await admin.messaging().send({
-              token: user.fcm_token,
-              notification: { title: pushTitle, body: pushBody },
-              android: { priority: "high" }
-        });
-      } catch (e) {
-          console.log("Push skip");
-      }
-  }
+if (!userQueryErr && userList && userList.length > 0) {
+    for (const userItem of userList) {
+        try {
+            await admin.messaging().send({
+                token: userItem.fcm_token,
+                notification: {
+                    title: "Peak Hour Rule Updated",
+                    body: `Administrator adjusted peak setting based on heatmap. New washer limit: ${washer_max}, dryer limit: ${dryer_max}.`
+                },
+                android: {
+                    priority: "high"
+                }
+            });
+        } catch (singlePushErr) {
+            console.warn("Push failed: ", singlePushErr.message);
+        }
+    }
+}
 
   res.json({ success: true, message: "Peak-hour limits updated successfully." });
 });
