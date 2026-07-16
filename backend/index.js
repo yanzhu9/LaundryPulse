@@ -915,7 +915,7 @@ setInterval(async () => {
   const now = new Date();
   const { data: expiredReservations } = await supabase
     .from('Machine_Table')
-    .select('machine_id, reserved_end_at')
+    .select('machine_id, reserved_end_at, current_user_id')
     .eq('machine_status', 'occupied')
     .not('reserved_end_at', 'is', null);
 
@@ -924,6 +924,8 @@ setInterval(async () => {
   for (const machine of expiredReservations) {
     const reservedEnd = new Date(machine.reserved_end_at);
     if (now < reservedEnd) continue;
+
+    const targetUserId = machine.current_user_id;
 
     await supabase
       .from('Machine_Table')
@@ -941,6 +943,12 @@ setInterval(async () => {
       .eq('booking_status', 'using');
 
     console.log(`Machine ${machine.machine_id} reservation expired → available`);
+
+    if (targetUserId) {
+      const notifyTitle = 'Reservation Expired ⏰';
+      const notifyBody = `Your reservation for Machine ${machine.machine_id} has expired. Please join the queue again if you want to use it.`;
+      await sendNotification(targetUserId, notifyTitle, notifyBody);
+    }
 
     await allocateWaitingQueueToMachine(machine.machine_id);
   }
