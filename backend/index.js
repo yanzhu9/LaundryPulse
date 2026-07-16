@@ -2577,18 +2577,20 @@ app.post("/api/admin/peak-setting", async (req, res) => {
         is_active: true
       }
     ]);
+    
+    const userResult = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .eq("role", "user")
+      .not("fcm_token", "is", null);
 
-    const { data: userList } = await supabase
-        .from("User_Table")
-        .select("fcm_token")
-        .eq("role", "user")
-        .not("fcm_token", "is", null);
+    const notifyTitle = "Peak Hour Notification";
+    const notifyBody = "This time slot is marked as peak hour by administrator. Washer queue limit: " + washer_max + ", Dryer queue limit: " + dryer_max + ". You can only join queue for same machine type after previous usage finished.";
 
-    const title = "Peak Hour Notification";
-    const bodyText = "This time slot is marked as peak hour by administrator. Washer queue limit: " + washer_max + ", Dryer queue limit: " + dryer_max + ". You can only join queue for same machine type after previous usage finished.";
-
-    for(let item of userList){
-      await sendNotification(item.fcm_token, title, bodyText);
+    if (userResult.data) {
+      for (const user of userResult.data) {
+        await sendNotification(user.fcm_token, notifyTitle, notifyBody);
+      }
     }
 
     res.json({ success: true, action: "insert", message: "Peak-hour setting saved successfully." });
@@ -2605,17 +2607,19 @@ app.post("/api/admin/peak-setting", async (req, res) => {
         }
       ]);
 
-      const { data: userList } = await supabase
-          .from("User_Table")
-          .select("fcm_token")
-          .eq("role", "user")
-          .not("fcm_token", "is", null);
+      const userResult = await supabase
+        .from("User_Table")
+        .select("fcm_token")
+        .eq("role", "user")
+        .not("fcm_token", "is", null);
 
-      const title = "Peak Hour Notification";
-      const bodyText = "This time slot is marked as peak hour by administrator. Washer queue limit: " + req.body.washer_max + ", Dryer queue limit: " + req.body.dryer_max + ". You can only join queue for same machine type after previous usage finished.";
+      const notifyTitle = "Peak Hour Notification";
+      const notifyBody = "This time slot is marked as peak hour by administrator. Washer queue limit: " + req.body.washer_max + ", Dryer queue limit: " + req.body.dryer_max + ". You can only join queue for same machine type after previous usage finished.";
 
-      for(let item of userList){
-        await sendNotification(item.fcm_token, title, bodyText);
+      if (userResult.data) {
+        for (const user of userResult.data) {
+          await sendNotification(user.fcm_token, notifyTitle, notifyBody);
+        }
       }
 
       return res.json({ success: true, action: "insert", message: "Peak-hour setting saved successfully." });
@@ -2629,23 +2633,26 @@ app.post("/api/admin/peak-setting", async (req, res) => {
 app.post("/api/admin/update-peak-limit", async (req, res) => {
   try{
     const { week_day, start_hour, washer_max, dryer_max } = req.body;
+
     await supabase
       .from("Peak_Hour_Setting")
       .update({ washer_max: washer_max, dryer_max: dryer_max })
       .eq("week_day", week_day)
       .eq("start_hour", start_hour);
 
-    const { data: userList } = await supabase
-        .from("User_Table")
-        .select("fcm_token")
-        .eq("role", "user")
-        .not("fcm_token", "is", null);
+    const userResult = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .eq("role", "user")
+      .not("fcm_token", "is", null);
 
-    const title = "Peak Hour Rule Updated";
-    const bodyText = "Administrator adjusted peak setting based on heatmap. New washer limit: " + washer_max + ", dryer limit: " + dryer_max + ".";
+    const notifyTitle = "Peak Hour Rule Updated";
+    const notifyBody = "Administrator adjusted peak setting based on heatmap. New washer limit: " + washer_max + ", dryer limit: " + dryer_max + ".";
 
-    for(let item of userList){
-      await sendNotification(item.fcm_token, title, bodyText);
+    if (userResult.data) {
+      for (const user of userResult.data) {
+        await sendNotification(user.fcm_token, notifyTitle, notifyBody);
+      }
     }
 
     res.json({ success: true, message: "Peak-hour limits updated successfully." });
