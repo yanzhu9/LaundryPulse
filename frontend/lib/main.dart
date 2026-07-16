@@ -414,7 +414,7 @@ class _FaultReportPageState extends State<FaultReportPage> {
             TextField(
               controller: machineNoCtrl,
               decoration: const InputDecoration(
-                hintText: "Example: W-02 / D-05",
+                hintText: "Example: W-02 / D-05 / 1",
                 border: OutlineInputBorder(),
                 contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
               ),
