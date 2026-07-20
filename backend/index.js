@@ -1,3 +1,4 @@
+process.env.TZ = 'Asia/Shanghai';
 require('dotenv').config();
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
@@ -6,14 +7,17 @@ const admin = require('firebase-admin');
 
 let adminInitialized = false;
 try {
-  const serviceAccount = require('/etc/secrets/serviceAccountKey.json');
+  const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (!rawJson) throw new Error("FIREBASE_SERVICE_ACCOUNT env variable empty");
+  const serviceAccount = JSON.parse(rawJson);
+
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount)
   });
   adminInitialized = true;
   console.log('[FCM] Firebase Admin initialized successfully');
 } catch (e) {
-  console.warn('[FCM] serviceAccountKey.json not found, push notifications disabled');
+  console.warn('[FCM] serviceAccount load failed, push notifications disabled. Reason:', e.message);
 }
 
 const app = express();
@@ -105,7 +109,7 @@ app.post('/register', async (req, res) => {
 
     await supabase
       .from('User_Table')
-      .insert([{ email, password, credit_score: 15}]);
+      .insert([{ email, password, credit_score: 15, role: "user"}]);
 
     return res.json({
       success: true,
@@ -159,7 +163,7 @@ app.post('/login', async (req, res) => {
 
     const { data: users, error: findError } = await supabase
       .from('User_Table')
-      .select('user_id, email, password')
+      .select('user_id, email, password, role')
       .eq('email', email)
       .limit(1);
 
@@ -182,13 +186,80 @@ app.post('/login', async (req, res) => {
     return res.json({
       success: true,
       msg: "Login successful! Redirecting...",
-      user_id: user.user_id
+      user_id: user.user_id,
+      role: user.role
     });
 
   } catch (err) {
     return res.json({
       success: false,
       msg: "Login failed. Please try again later."
+    });
+  }
+});
+
+// Reset a user's password directly by email.
+// Note: this does not verify identity (no email code) — acceptable for the
+// current project scope; see the reset-password plan for the secure upgrade.
+app.post('/reset-password', async (req, res) => {
+  const { email: rawEmail, newPassword } = req.body;
+  const email = rawEmail?.toLowerCase().trim();
+
+  try {
+    const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!email || !emailRegex.test(email)) {
+      return res.json({
+        success: false,
+        msg: "Invalid email format. Please enter a valid email address."
+      });
+    }
+
+    // Same password rules as register/login.
+    if (!newPassword || newPassword.length < 6) {
+      return res.json({
+        success: false,
+        msg: "Password must be at least 6 characters long."
+      });
+    }
+    const hasLetter = /[a-zA-Z]/.test(newPassword);
+    const hasNumber = /\d/.test(newPassword);
+    if (!hasLetter || !hasNumber) {
+      return res.json({
+        success: false,
+        msg: "Password must contain both letters and numbers."
+      });
+    }
+
+    // Only reset if the email actually exists.
+    const { data: users, error: findError } = await supabase
+      .from('User_Table')
+      .select('user_id')
+      .eq('email', email)
+      .limit(1);
+
+    if (findError || !users || users.length === 0) {
+      return res.json({
+        success: false,
+        msg: "Email not found. Please check your email address."
+      });
+    }
+
+    const { error: updateError } = await supabase
+      .from('User_Table')
+      .update({ password: newPassword })
+      .eq('email', email);
+
+    if (updateError) throw updateError;
+
+    return res.json({
+      success: true,
+      msg: "Password reset successful! Please log in with your new password."
+    });
+
+  } catch (err) {
+    return res.json({
+      success: false,
+      msg: "Password reset failed. Please try again later."
     });
   }
 });
@@ -206,6 +277,39 @@ app.get('/machines', async (req, res) => {
   res.send(data);
 });
 
+app.get('/api/admin/lockers', async (req, res) => {
+  const { data, error } = await supabase
+    .from('Locker_Table')
+    .select('locker_id, locker_status')
+    .order('locker_id', { ascending: true });
+
+  if (error) {
+    console.error('Failed to fetch locker data:', error);
+    return res.status(500).json({ success: false, msg: 'Failed to fetch locker data' });
+  }
+  res.send(data);
+});
+
+// Check if the current time is within any active peak-hour period, and return the corresponding configuration if so.
+const checkCurrentPeakHour = async () => {
+  const now = new Date();
+  const weekDayNum = now.getDay(); // 0=Sunday, 1=Monday ~ 6=Saturday, corresponding to your frontend weekList: 1=Monday
+  const currentHour = now.getHours();
+
+  const { data: peakList } = await supabase
+    .from("Peak_Hour_Setting")
+    .select("week_day, start_hour, end_hour, washer_max, dryer_max")
+    .eq("week_day", weekDayNum)
+    .eq("is_active", true);
+
+  for (const item of peakList) {
+    if (currentHour >= item.start_hour && currentHour < item.end_hour) {
+      return item; // Current time is within this peak hour period, return the configuration
+    }
+  }
+  return null; // Not within any peak hour period
+};
+
 app.post("/api/queue-book", async (req, res) => {
   try {
     const { user_id, type } = req.body;
@@ -216,8 +320,8 @@ app.post("/api/queue-book", async (req, res) => {
     const PICKUP_GRACE = 15;
     const cycleBase = type === "washer" ? WASHER_CYCLE : DRYER_CYCLE;
     // Estimated total time for one machine cycle including pickup grace, used for calculating queue wait time when no machines are currently available
-    const fullMachineDuration = type === "washer" 
-      ? (15 + WASHER_CYCLE + PICKUP_GRACE) 
+    const fullMachineDuration = type === "washer"
+      ? (15 + WASHER_CYCLE + PICKUP_GRACE)
       : (15 + DRYER_CYCLE + PICKUP_GRACE);
 
     // 1. Credit score check: if user's credit_score < 15 → reject booking request, no queuing allowed
@@ -238,6 +342,59 @@ app.post("/api/queue-book", async (req, res) => {
       });
     }
 
+    // Check if there are any machines of this type that are either available or currently occupied (not overdue or out of service). If all machines are overdue or out of service, reject the booking request.
+    const { data: allTypeMachines } = await supabase
+      .from("Machine_Table")
+      .select("machine_status")
+      .eq("machine_type", type);
+      
+    const hasValidMachine = allTypeMachines.some(m => 
+        m.machine_status === "available" || m.machine_status === "occupied"
+    );
+
+    if (!hasValidMachine) {
+      return res.json({
+        success: false,
+        message: "All machines of this type are either overdue or out of service. You cannot join the queue for this machine type at the moment."
+      });
+    }
+
+    const peakInfo = await checkCurrentPeakHour();
+    if (peakInfo) {
+      // Currently within a peak hour period
+
+      // Validation 1: User has pending tasks (waiting / using) for this machine type, prevent queuing
+      const { data: userExistBooking } = await supabase
+        .from("Booking_Table")
+        .select("booking_status")
+        .eq("user_id", user_id)
+        .eq("machine_type", type)
+        .in("booking_status", ["waiting", "using"])
+        .limit(1);
+
+      if (userExistBooking.length > 0) {
+        return res.json({
+          success: false,
+          message: "During peak hours, you can only queue for this machine type after your previous laundry is finished."
+        });
+      }
+
+      // Validation 2: Current queue count has reached the limit
+      const limitNum = type === "washer" ? peakInfo.washer_max : peakInfo.dryer_max;
+      const { count: currentQueueCount } = await supabase
+        .from("Booking_Table")
+        .select("*", { count: "exact", head: true })
+        .eq("machine_type", type)
+        .eq("booking_status", "waiting")
+        .is("machine_id", null);
+
+      if (currentQueueCount >= limitNum) {
+        return res.json({
+          success: false,
+          message: "Peak-hour queue limit reached, please try again later."
+        });
+      }
+    }
     // 2. Try to find an available machine of the requested type. If found, allocate it immediately and set reserved_end_at = now + 15 min
     const { data: availableMachines } = await supabase
       .from("Machine_Table")
@@ -254,6 +411,7 @@ app.post("/api/queue-book", async (req, res) => {
         {
           user_id: user_id,
           machine_id: targetMachine.machine_id,
+          machine_type: type,
           booking_status: "using"
         }
       ]);
@@ -341,7 +499,116 @@ app.post("/api/queue-book", async (req, res) => {
       success: true,
       message: `No available machine, added to global ${type} queue. Estimated wait time: ${estimatedWaitMin} min (${queuePeopleCount} people ahead of you)`,
       estimated_wait_min: estimatedWaitMin,
-      queue_ahead_count: queuePeopleCount 
+      queue_ahead_count: queuePeopleCount
+    });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/get-queue-overview", async (req, res) => {
+  try {
+    const { user_id, type } = req.query;
+    const WASHER_CYCLE = 45;
+    const DRYER_CYCLE = 45;
+    const PICKUP_GRACE = 15;
+    const cycleBase = type === "washer" ? WASHER_CYCLE : DRYER_CYCLE;
+    const now = new Date();
+
+    // 1. Query all waiting queue records for this machine type (booking_status = "waiting", machine_id = null) → get the number of people in the queue
+    const { data: waitingList } = await supabase
+      .from("Booking_Table")
+      .select("user_id, created_at")
+      .eq("machine_type", type)
+      .eq("booking_status", "waiting")
+      .is("machine_id", null)
+      .order("created_at", { ascending: true });
+
+    let peopleInQueue = waitingList.length;
+
+    // 2. Query all occupied machines of this type (machine_status = "occupied") → calculate the earliest time any machine will be free, then calculate the base wait time in minutes
+    let machineBaseWaitMin = 0;
+    const { data: occupiedMachines } = await supabase
+      .from("Machine_Table")
+      .select("machine_id, reserved_end_at, finished_at, pickup_end_at")
+      .eq("machine_type", type)
+      .eq("machine_status", "occupied");
+
+    if (occupiedMachines.length > 0) {
+      const waitList = [];
+      for (const machine of occupiedMachines) {
+        let machineFreeAt;
+        const { reserved_end_at, finished_at, pickup_end_at } = machine;
+
+        if (finished_at === null && pickup_end_at === null) {
+          const reserveEnd = new Date(reserved_end_at);
+          machineFreeAt = new Date(reserveEnd.getTime() + (cycleBase + PICKUP_GRACE) * 60 * 1000);
+        } else if (finished_at && pickup_end_at === null) {
+          const finishTime = new Date(finished_at);
+          machineFreeAt = new Date(finishTime.getTime() + PICKUP_GRACE * 60 * 1000);
+        } else if (pickup_end_at) {
+          machineFreeAt = new Date(pickup_end_at);
+        } else {
+          machineFreeAt = now;
+        }
+        const baseWait = Math.max(0, (machineFreeAt - now) / 1000 / 60);
+        waitList.push(baseWait);
+      }
+      machineBaseWaitMin = Math.round(Math.min(...waitList));
+    }
+
+    // 3. Check if the user is already in the queue and how many people are ahead of them
+    let isUserInQueue = false;
+    let peopleAhead = 0;
+    for (let i = 0; i < waitingList.length; i++) {
+      if (waitingList[i].user_id === user_id) {
+        isUserInQueue = true;
+        peopleAhead = i;
+        break;
+      }
+    }
+
+    // 4. If there are any available machines of this type, reset the queue count and base wait time to 0 since the user can be allocated immediately
+    const { data: availableMachines } = await supabase
+      .from("Machine_Table")
+      .select("*")
+      .eq("machine_type", type)
+      .eq("machine_status", "available");
+
+    if (availableMachines.length > 0) {
+      return res.json({
+      peopleInQueue: 0,
+      earliestReadyMin: 0,
+      isUserInQueue: false,
+      peopleAhead: 0,
+      isInWasher: false,
+      isInDryer: false
+    });
+    }
+
+    // 5. Query all waiting queue records for this user
+    const { data: userWaitingRecords } = await supabase
+      .from("Booking_Table")
+      .select("machine_type")
+      .eq("user_id", user_id)
+      .eq("booking_status", "waiting")
+      .is("machine_id", null);
+
+    let isInWasher = false;
+    let isInDryer = false;
+    userWaitingRecords.forEach(item => {
+      if (item.machine_type === "washer") isInWasher = true;
+      if (item.machine_type === "dryer") isInDryer = true;
+    });
+
+    res.json({
+      peopleInQueue: peopleInQueue,
+      earliestReadyMin: machineBaseWaitMin,
+      isUserInQueue: isUserInQueue,
+      peopleAhead: peopleAhead,
+      isInWasher: isInWasher,
+      isInDryer: isInDryer
     });
 
   } catch (err) {
@@ -649,7 +916,7 @@ setInterval(async () => {
   const now = new Date();
   const { data: expiredReservations } = await supabase
     .from('Machine_Table')
-    .select('machine_id, reserved_end_at')
+    .select('machine_id, reserved_end_at, current_user_id')
     .eq('machine_status', 'occupied')
     .not('reserved_end_at', 'is', null);
 
@@ -658,6 +925,8 @@ setInterval(async () => {
   for (const machine of expiredReservations) {
     const reservedEnd = new Date(machine.reserved_end_at);
     if (now < reservedEnd) continue;
+
+    const targetUserId = machine.current_user_id;
 
     await supabase
       .from('Machine_Table')
@@ -675,6 +944,12 @@ setInterval(async () => {
       .eq('booking_status', 'using');
 
     console.log(`Machine ${machine.machine_id} reservation expired → available`);
+
+    if (targetUserId) {
+      const notifyTitle = 'Reservation Expired ⏰';
+      const notifyBody = `Your reservation for Machine ${machine.machine_id} has expired. Please join the queue again if you want to use it.`;
+      await sendNotification(targetUserId, notifyTitle, notifyBody);
+    }
 
     await allocateWaitingQueueToMachine(machine.machine_id);
   }
@@ -715,6 +990,13 @@ setInterval(async () => {
     );
     console.log(`Machine ${m.machine_id} wash finished, 15-minute pickup window started`);
 
+    // Update the booking status to "finished" for this machine, so the booking record reflects that the wash cycle has completed.
+    await supabase
+      .from("Booking_Table")
+      .update({ booking_status: "finished" })
+      .eq("machine_id", m.machine_id)
+      .eq("booking_status", "using");
+    
     // Optional auto dryer queue transfer:
     // If the user opted in for a dryer when starting this washer cycle, automatically
     // reserve a dryer (or queue them) the moment the wash finishes, so they only make one trip.
@@ -805,7 +1087,7 @@ setInterval(async () => {
   // 补充 current_user_id，用于发送 overdue 通知
   const { data: pickupExpireList } = await supabase
     .from("Machine_Table")
-    .select("machine_id, pickup_end_at, current_user_id")
+    .select("machine_id, pickup_end_at, current_user_id, machine_type")
     .eq("machine_status", "occupied")
     .not("pickup_end_at", "is", null);
 
@@ -830,6 +1112,65 @@ setInterval(async () => {
       `You didn't collect from Machine ${m.machine_id} in time. Others may now assist in moving your laundry.`
     );
     console.log(`Machine ${m.machine_id} pickup expired → overdue`);
+
+      // Query all machines of this type (washer/dryer) to see if any are still available or occupied. If none are valid, notify all waiting users that the queue is cancelled.
+    const { data: allTypeMachines } = await supabase
+      .from("Machine_Table")
+      .select("machine_status")
+      .eq("machine_type", m.machine_type);
+
+    const hasValidMachine = allTypeMachines.some(item => 
+        item.machine_status === "available" || item.machine_status === "occupied"
+    );
+
+    if (!hasValidMachine) {
+      const { data: waitingUserList } = await supabase
+        .from("Booking_Table")
+        .select("user_id")
+        .eq("machine_type", m.machine_type)
+        .eq("booking_status", "waiting")
+        .is("machine_id", null);
+      
+      const notifyTitle = "Queue Cancelled";
+      const notifyBody = "All machines of this type are either overdue or out of service. Your queue position has expired. You can help collect laundry to continue to use these machines.";
+
+      for (const userItem of waitingUserList) {
+        try {
+          await sendNotification(userItem.user_id, notifyTitle, notifyBody);
+        } catch (pushErr) {
+          console.log(`Queue user ${userItem.user_id} push skipped`);
+        }
+      }
+
+      // Clear all waiting queue records for this machine type (booking_status = "waiting", machine_id = null) → set booking_status = "expired"
+      await supabase
+        .from("Booking_Table")
+        .update({ booking_status: "expired" })
+        .eq("machine_type", m.machine_type)
+        .eq("booking_status", "waiting")
+        .is("machine_id", null);
+
+      console.log(`All ${m.machine_type} valid machines are unavailable, the entire waiting queue has been cleared`);
+    } else {
+      // Query all waiting users in the queue for this machine type (booking_status = "waiting", machine_id = null) → send them a notification that this machine is overdue and they may help collect clothes to unlock it
+      const { data: waitingUserList } = await supabase
+        .from("Booking_Table")
+        .select("user_id")
+        .eq("machine_type", m.machine_type)
+        .eq("booking_status", "waiting")
+        .is("machine_id", null);
+
+      if (waitingUserList.length === 0) continue;
+
+      // Send notification to all waiting users that this machine is overdue and they may help collect clothes to unlock it
+      const notifyTitle = "Waiting Time Updated";
+      const notifyBody = `Machine ${m.machine_id} is overdue. You may help collect clothes to unlock this machine.`;
+
+      for (const item of waitingUserList) {
+        await sendNotification(item.user_id, notifyTitle, notifyBody);
+      }
+      console.log(`Sent overdue alert to ${waitingUserList.length} queued users for ${m.machine_type}`);
+    }
   }
 }, 5000);
 
@@ -1201,26 +1542,6 @@ function getNextMondayMidnight() {
 }
 
 /**
- * Get the next Monday at 00:00:00.000 as the refresh deadline for heatmap stats
- */
-function getNextMondayMidnight() {
-  try {
-    const now = new Date();
-    const day = now.getDay();
-    const addDays = day === 0 ? 1 : 8 - day;
-    const nextMon = new Date(now);
-    nextMon.setDate(now.getDate() + addDays);
-    nextMon.setHours(0, 0, 0, 0);
-    return nextMon;
-  } catch (err) {
-    // If any error occurs, fallback to 7 days from now
-    const fallback = new Date();
-    fallback.setDate(fallback.getDate() + 7);
-    return fallback;
-  }
-}
-
-/**
  * Get the weekday name from a Date object, e.g., "Monday", "Tuesday", etc.
  */
 function getWeekdayName(dateObj) {
@@ -1330,10 +1651,56 @@ async function computeHeatmapStats() {
     }));
   }
 
+  let machineUtilStatsResult = [
+    { machineType: "washer", utilRate: 0 },
+    { machineType: "dryer", utilRate: 0 }
+  ];
+  try {
+    // Query Usage_Log_Table for all records up to the cutoff time
+    const { data: usageLogRecords, error: usageLogErr } = await supabase
+      .from("Usage_Log_Table")
+      .select("machine_type, mode_min")
+      .lte("used_at", cutoffTime.toISOString());
+
+    if (usageLogErr) throw new Error("Usage_Log_Table query fail: " + usageLogErr.message);
+
+    let totalWasherMins = 0;
+    let totalDryerMins = 0;
+    // Sum the total minutes for each machine type
+    usageLogRecords.forEach(logItem => {
+      const singleMin = Number(logItem.mode_min ?? 0);
+      if (logItem.machine_type === "washer") {
+        totalWasherMins += singleMin;
+      } else if (logItem.machine_type === "dryer") {
+        totalDryerMins += singleMin;
+      }
+    });
+
+    // Calculate utilization percentages
+    const totalAllMins = totalWasherMins + totalDryerMins;
+    let washerPercent = 0;
+    let dryerPercent = 0;
+    if (totalAllMins > 0) {
+      washerPercent = Number(((totalWasherMins / totalAllMins) * 100).toFixed(1));
+      dryerPercent = Number(((totalDryerMins / totalAllMins) * 100).toFixed(1));
+    }
+    machineUtilStatsResult = [
+      { machineType: "washer", utilRate: washerPercent },
+      { machineType: "dryer", utilRate: dryerPercent }
+    ];
+  } catch (usageErr) {
+    console.error("Machine usage minute calculate error: ", usageErr);
+    machineUtilStatsResult = [
+      { machineType: "washer", utilRate: 0 },
+      { machineType: "dryer", utilRate: 0 }
+    ];
+  }
+  
   return {
     updateCutoffDate: cutoffDateStr,
     dailyStats: dailyStatsResult,
-    twoHourSlotStats: slotStatsResult
+    twoHourSlotStats: slotStatsResult,
+    machineUtilStats: machineUtilStatsResult
   };
 }
 
@@ -1369,7 +1736,11 @@ app.get("/api/usage-heatmap-stats", async (req, res) => {
       twoHourSlotStats: fullTwoHourSlots.map(timeRange => ({
         timeRange,
         avgLoad: 0
-      }))
+      })),
+      machineUtilStats: [
+        { machineType: "washer", utilRate: 0 },
+        { machineType: "dryer", utilRate: 0 }
+      ]
     });
   }
 });
@@ -1602,6 +1973,646 @@ app.get('/api/off-peak-recommendation', async (req, res) => {
     console.error("off-peak recommendation failed:", err);
     res.status(500).json({ success: false, error: err.message });
   }
+});
+
+// POST /api/create-fault-report
+app.post("/api/create-fault-report", async (req, res) => {
+  try {
+    const { facilityType, facilityNumber, faultDesc, submitUserId } = req.body;
+
+    // 1. Validate required fields
+    if (!facilityType || !facilityNumber || !faultDesc || !submitUserId) {
+      return res.json({
+        success: false,
+        msg: "All facility and fault fields cannot be empty"
+      });
+    }
+
+    // 2. First step: Insert fault report into Fault_Report_Table
+    const { error: insertErr } = await supabase
+      .from("Fault_Report_Table")
+      .insert({
+        reporter_user_id: submitUserId,
+        facility_type: facilityType,
+        facility_number: facilityNumber,
+        fault_description: faultDesc,
+        report_status: "pending",
+        reported_at: new Date()
+      });
+    if (insertErr) throw new Error("Insert report failed: " + insertErr.message);
+
+    // 3. Update the facility's status to "outOfService" in the corresponding table
+    let updateErr = null;
+    if (facilityType === "washer" || facilityType === "dryer") {
+      const { error } = await supabase
+        .from("Machine_Table")
+        .update({ machine_status: "outOfService" })
+        .eq("machine_id", facilityNumber);
+      updateErr = error;
+    } else if (facilityType === "locker") {
+      const { error } = await supabase
+        .from("Locker_Table")
+        .update({ locker_status: "outOfService" })
+        .eq("locker_id", facilityNumber);
+      updateErr = error;
+    } else {
+      throw new Error("Only Washer, Dryer, Locker are supported");
+    }
+
+    if (updateErr) throw new Error("Update device status failed: " + updateErr.message);
+
+    if (facilityType === "washer" || facilityType === "dryer") {
+      const { data: allTypeMachines } = await supabase
+        .from("Machine_Table")
+        .select("machine_status")
+        .eq("machine_type", facilityType);
+
+      // Check if there are any machines of this type that are still available or occupied
+      const hasValidMachine = allTypeMachines.some(item =>
+        item.machine_status === "available" || item.machine_status === "occupied"
+      );
+
+      if (!hasValidMachine) {
+        const { data: waitingUserList } = await supabase
+          .from("Booking_Table")
+          .select("user_id")
+          .eq("machine_type", facilityType)
+          .eq("booking_status", "waiting")
+          .is("machine_id", null);
+
+        const notifyTitle = "Queue Cancelled";
+        const notifyBody = "All machines of this type are either overdue or out of service. Your queue position has expired.";
+        for (const userItem of waitingUserList) {
+          try {
+            await sendNotification(userItem.user_id, notifyTitle, notifyBody);
+          } catch (pushErr) {
+            console.log(`Queue user ${userItem.user_id} push skipped`);
+          }
+        }
+
+        await supabase
+          .from("Booking_Table")
+          .update({ booking_status: "expired" })
+          .eq("machine_type", facilityType)
+          .eq("booking_status", "waiting")
+          .is("machine_id", null);
+
+        console.log(`All ${facilityType} valid machines are unavailable, the entire waiting queue has been cleared`);
+      }
+    }
+
+    // 4. Push admin FCM notifications 
+    const { data: adminList, error: adminErr } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .eq("role", "admin")
+      .not("fcm_token", "is", null);
+    if (adminErr) throw new Error(adminErr.message);
+    const adminTokens = adminList.map(item => item.fcm_token);
+
+    if (adminInitialized && adminTokens.length > 0) {
+      for (const token of adminTokens) {
+        await admin.messaging().send({
+          token: token,
+          notification: {
+            title: "Equipment Fault Alert",
+            body: `[${facilityType} ${facilityNumber}] Fault: ${faultDesc.slice(0, 70)}`
+          },
+          data: {
+            targetPage: "adminFaultList",
+            facilityNumber: facilityNumber
+          },
+          android: {
+            priority: "high"
+          }
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      msg: "Fault report created, machine marked out of service"
+    });
+  } catch (err) {
+    return res.json({
+      success: false,
+      msg: err.message
+    });
+  }
+});
+
+// GET /api/get-all-fault-list
+app.get("/api/get-all-fault-list", async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from("Fault_Report_Table")
+      .select("record_id, facility_type, facility_number, fault_description, reported_at, report_status")
+      .eq("report_status", "pending")
+      .order("reported_at", { ascending: false });
+
+    if (error) throw error;
+
+    return res.status(200).json({
+      success: true,
+      fault_list: data
+    });
+  } catch (err) {
+    console.error("Get fault list error: ", err);
+    return res.status(200).json({
+      success: false,
+      fault_list: []
+    });
+  }
+});
+
+// POST /api/send-all-user-notification
+async function sendAllUserNotification(title, body) {
+  if (!adminInitialized) return;
+  try {
+    const { data: userList, error } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .not("fcm_token", "is", null)
+      .eq("role", "user");
+
+    if (error || !userList || userList.length === 0) {
+      console.log("[FCM] No valid user list for broadcast");
+      return;
+    }
+
+    for (const user of userList) {
+      const token = user.fcm_token;
+      try {
+        await admin.messaging().send({
+          token: token,
+          notification: { title, body }
+        });
+        console.log(`[FCM Broadcast] Sent to token ${token.slice(0,20)}...`);
+      } catch (err) {
+        console.warn(`[FCM Broadcast Fail] token ${token.slice(0,20)}...`, err.message);
+      }
+    }
+  } catch (globalErr) {
+    console.error("[FCM Broadcast global error]", globalErr.message);
+  }
+}
+
+// POST /api/mark-fault-fixed
+app.post("/api/mark-fault-fixed", async (req, res) => {
+  try {
+    const { record_id, facility_type, facility_number } = req.body;
+    if (!record_id || !facility_type || !facility_number) {
+      return res.status(200).json({ success: false, msg: "Missing required params" });
+    }
+
+    // Step 1: Update the fault report status to "fixed"
+    const { error: updateFaultErr } = await supabase
+      .from("Fault_Report_Table")
+      .update({ report_status: "fixed" })
+      .eq("record_id", record_id);
+    if (updateFaultErr) throw updateFaultErr;
+
+    // Step 2: Update the facility status to "available" in the corresponding table
+    if (facility_type === "washer" || facility_type === "dryer") {
+      const { error: machineErr } = await supabase
+        .from("Machine_Table")
+        .update({ machine_status: "available" })
+        .eq("machine_id", facility_number)
+        .eq("machine_type", facility_type);
+      if (machineErr) throw machineErr;
+    } else if (facility_type === "locker") {
+      const { error: lockerErr } = await supabase
+        .from("Locker_Table")
+        .update({ locker_status: "available" })
+        .eq("locker_id", facility_number);
+      if (lockerErr) throw lockerErr;
+    }
+
+    // Step 3: Get all user FCM tokens and send multicast notifications
+    const runFcmPush = async () => {
+      const pushTitle = "Facility Fixed";
+      const pushBody = `The ${facility_type} No.${facility_number} fault has been fixed, you can use it normally now.`;
+      await sendAllUserNotification(pushTitle, pushBody);
+    };
+    runFcmPush();
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error("Mark fixed fault error: ", err);
+    return res.status(200).json({ success: false, msg: String(err) });
+  }
+});
+
+app.post("/admin/machine/manualSetOutOfService", async (req, res) => {
+  try {
+    const machineId = req.body.machineId;
+
+    if (!machineId || typeof machineId !== "string") {
+      return res.status(400).json({ message: "Invalid machineId format, example: W-01 / D-01" });
+    }
+
+    const { data: targetMachine, error: machineQueryErr } = await supabase
+      .from("Machine_Table")
+      .select("machine_id, machine_status, machine_type")
+      .eq("machine_id", machineId)
+      .single();
+
+    if (machineQueryErr || !targetMachine) {
+      return res.status(404).json({ message: "Target machine not found" });
+    }
+
+    if (targetMachine.machine_status === "outOfService") {
+      return res.status(400).json({ message: "This machine is already outOfService" });
+    }
+
+    const { error: updateMachineErr } = await supabase
+      .from("Machine_Table")
+      .update({ machine_status: "outOfService" })
+      .eq("machine_id", machineId);
+
+    if (updateMachineErr) {
+      console.error("Update machine status failed: ", updateMachineErr);
+      return res.status(500).json({ message: "Failed to update machine status" });
+    }
+
+    const machineType = targetMachine.machine_type;
+    if (machineType === "washer" || machineType === "dryer") {
+      const { data: allTypeMachines } = await supabase
+        .from("Machine_Table")
+        .select("machine_status")
+        .eq("machine_type", machineType);
+
+      const hasValidMachine = allTypeMachines.some(item =>
+        item.machine_status === "available" || item.machine_status === "occupied"
+      );
+
+      if (!hasValidMachine) {
+        const { data: waitingUserList } = await supabase
+          .from("Booking_Table")
+          .select("user_id")
+          .eq("machine_type", machineType)
+          .eq("booking_status", "waiting")
+          .is("machine_id", null);
+
+        const notifyTitle = "Queue Cancelled";
+        const notifyBody = "All machines of this type are either overdue or out of service. Your queue position has expired.";
+
+        for (const userItem of waitingUserList) {
+          try {
+            await sendNotification(userItem.user_id, notifyTitle, notifyBody);
+          } catch (pushErr) {
+            console.log(`Queue user ${userItem.user_id} push skipped`);
+          }
+        }
+
+        await supabase
+          .from("Booking_Table")
+          .update({ booking_status: "expired" })
+          .eq("machine_type", machineType)
+          .eq("booking_status", "waiting")
+          .is("machine_id", null);
+
+        console.log(`All ${machineType} valid machines are unavailable, the entire waiting queue has been cleared`);
+      }
+    }
+    
+    const { data: userList, error: userQueryErr } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .not("fcm_token", "is", null)
+      .eq("role", "user");
+
+    if (userQueryErr) {
+      console.error("Fetch user fcm token error: ", userQueryErr);
+      return res.status(500).json({ message: "Machine shutdown succeeded, but notification send failed" });
+    }
+
+    const tokenArr = userList.map(item => item.fcm_token);
+    const pushPayload = {
+      notification: {
+        title: "Device Temporary Shutdown Notice",
+        body: `Machine ${machineId} is detected faulty by admin, temporarily unavailable. Please select other devices.`
+      },
+      data: {
+        type: "machineFaultNotice",
+        machineId: machineId
+      }
+    };
+
+    for (const singleToken of tokenArr) {
+      try {
+        await admin.messaging().send({
+          token: singleToken,
+          ...pushPayload
+        });
+      } catch (singlePushErr) {
+        console.warn(`Push failed for token ${singleToken}: `, singlePushErr.message);
+      }
+    }
+
+    return res.status(200).json({ success: true, message: "Machine marked outOfService, all user notifications sent" });
+  } catch (globalErr) {
+    console.error("Manual shutdown api global error: ", globalErr);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+app.post("/admin/locker/manualSetOutOfService", async (req, res) => {
+  try {
+    const lockerId = req.body.lockerId;
+
+    if (!lockerId || typeof lockerId !== "number") {
+      return res.status(400).json({ message: "lockerId must be pure number like 1,2,3..." });
+    }
+
+    const { data: targetLocker, error: lockerQueryErr } = await supabase
+      .from("Locker_Table")
+      .select("locker_id, locker_status")
+      .eq("locker_id", lockerId)
+      .single();
+
+    if (lockerQueryErr || !targetLocker) {
+      return res.status(404).json({ message: "Target locker not found" });
+    }
+
+    if (targetLocker.locker_status === "outOfService") {
+      return res.status(400).json({ message: "This locker is already outOfService" });
+    }
+
+    const { error: updateLockerErr } = await supabase
+      .from("Locker_Table")
+      .update({ locker_status: "outOfService" })
+      .eq("locker_id", lockerId);
+
+    if (updateLockerErr) {
+      console.error("Update locker status error: ", updateLockerErr);
+      return res.status(500).json({ message: "Failed to update locker status" });
+    }
+
+    const { data: userList, error: userQueryErr } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .not("fcm_token", "is", null)
+      .eq("role", "user");
+
+    if (userQueryErr) {
+      console.error("Fetch user fcm token error: ", userQueryErr);
+      return res.status(500).json({ message: "Locker shutdown succeeded, but notification send failed" });
+    }
+
+    const tokenArr = userList.map(item => item.fcm_token);
+    const pushPayload = {
+      notification: {
+        title: "Locker Temporary Shutdown Notice",
+        body: `Locker ${lockerId} is detected faulty by admin, temporarily unavailable. Please select other lockers.`
+      },
+      data: {
+        type: "lockerFaultNotice",
+        lockerId: lockerId.toString()
+      }
+    };
+
+    for (const singleToken of tokenArr) {
+      try {
+        await admin.messaging().send({
+          token: singleToken,
+          ...pushPayload
+        });
+      } catch (singlePushErr) {
+        console.warn(`Push failed for token ${singleToken}: `, singlePushErr.message);
+      }
+    }
+
+    return res.status(200).json({ success: true, message: "Locker marked outOfService, all user notifications sent" });
+  } catch (globalErr) {
+    console.error("Locker shutdown api global error: ", globalErr);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+// POST /admin/machine/manualRestoreToAvailable
+app.post("/admin/machine/manualRestoreToAvailable", async (req, res) => {
+  try {
+    const machineId = req.body.machineId;
+
+    if (!machineId || typeof machineId !== "string") {
+      return res.status(400).json({ message: "machineId must be valid string like W‑01" });
+    }
+
+    const { data: targetMachine, error: machineQueryErr } = await supabase
+      .from("Machine_Table")
+      .select("machine_id, machine_status")
+      .eq("machine_id", machineId)
+      .single();
+
+    if (machineQueryErr || !targetMachine) {
+      return res.status(404).json({ message: "Target machine not found" });
+    }
+
+    if (targetMachine.machine_status === "available") {
+      return res.status(400).json({ message: "This machine is already available" });
+    }
+
+    const { data: userList, error: userQueryErr } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .eq("role", "user")
+      .not("fcm_token", "is", null);
+
+    if (userQueryErr) {
+      console.error("Fetch user fcm token error: ", userQueryErr);
+      return res.status(500).json({ message: "Machine restore succeeded, but notification send failed" });
+    }
+
+    const { error: updateMachineErr } = await supabase
+      .from("Machine_Table")
+      .update({ machine_status: "available" })
+      .eq("machine_id", machineId);
+
+    if (updateMachineErr) {
+      console.error("Update machine status error: ", updateMachineErr);
+      return res.status(500).json({ message: "Failed to update machine status" });
+    }
+
+    const tokenArr = userList.map(item => item.fcm_token);
+    const pushPayload = {
+      notification: {
+        title: "Device Restored Notice",
+        body: `Machine ${machineId} has been repaired, now available for use.`
+      },
+      data: {
+        type: "machineRestoreNotice",
+        machineId: machineId
+      }
+    };
+
+    for (const singleToken of tokenArr) {
+      try {
+        await admin.messaging().send({
+          token: singleToken,
+          ...pushPayload
+        });
+      } catch (singlePushErr) {
+        console.warn(`Push failed for token ${singleToken}: `, singlePushErr.message);
+      }
+    }
+
+    return res.status(200).json({ success: true, message: "Machine restored to available, all user notifications sent" });
+  } catch (globalErr) {
+    console.error("Machine restore api global error: ", globalErr);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+// POST /admin/locker/manualRestoreToAvailable
+app.post("/admin/locker/manualRestoreToAvailable", async (req, res) => {
+  try {
+    const lockerId = req.body.lockerId;
+
+    if (!lockerId || typeof lockerId !== "number") {
+      return res.status(400).json({ message: "lockerId must be pure number like 1,2,3..." });
+    }
+
+    const { data: targetLocker, error: lockerQueryErr } = await supabase
+      .from("Locker_Table")
+      .select("locker_id, locker_status")
+      .eq("locker_id", lockerId)
+      .single();
+
+    if (lockerQueryErr || !targetLocker) {
+      return res.status(404).json({ message: "Target locker not found" });
+    }
+
+    if (targetLocker.locker_status === "available") {
+      return res.status(400).json({ message: "This locker is already available" });
+    }
+
+    const { data: userList, error: userQueryErr } = await supabase
+      .from("User_Table")
+      .select("fcm_token")
+      .eq("role", "user")
+      .not("fcm_token", "is", null);
+
+    if (userQueryErr) {
+      console.error("Fetch user fcm token error: ", userQueryErr);
+      return res.status(500).json({ message: "Locker restore succeeded, but notification send failed" });
+    }
+
+    const { error: updateLockerErr } = await supabase
+      .from("Locker_Table")
+      .update({ locker_status: "available" })
+      .eq("locker_id", lockerId);
+
+    if (updateLockerErr) {
+      console.error("Update locker status error: ", updateLockerErr);
+      return res.status(500).json({ message: "Failed to update locker status" });
+    }
+
+    const tokenArr = userList.map(item => item.fcm_token);
+    const pushPayload = {
+      notification: {
+        title: "Locker Restored Notice",
+        body: `Locker ${lockerId} has been repaired, now available for use.`
+      },
+      data: {
+        type: "lockerRestoreNotice",
+        lockerId: lockerId.toString()
+      }
+    };
+
+    for (const singleToken of tokenArr) {
+      try {
+        await admin.messaging().send({
+          token: singleToken,
+          ...pushPayload
+        });
+      } catch (singlePushErr) {
+        console.warn(`Push failed for token ${singleToken}: `, singlePushErr.message);
+      }
+    }
+
+    return res.status(200).json({ success: true, message: "Locker restored to available, all user notifications sent" });
+  } catch (globalErr) {
+    console.error("Locker restore api global error: ", globalErr);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+// POST /api/admin/peak-setting
+app.post("/api/admin/peak-setting", async (req, res) => {
+  try {
+    const { week_day, start_hour, end_hour, washer_max, dryer_max } = req.body;
+
+    // check if the peak-hour setting for the given week_day and start_hour already exists
+    const { data: existRecord } = await supabase
+      .from("Peak_Hour_Setting")
+      .select("id, washer_max, dryer_max")
+      .eq("week_day", week_day)
+      .eq("start_hour", start_hour)
+      .single();
+
+    // if existRecord is found, check if the new values are the same as the existing ones
+    if(existRecord){
+      // If the values are the same, return a response indicating that the setting is identical
+      if(existRecord.washer_max === washer_max && existRecord.dryer_max === dryer_max){
+        return res.json({
+          success: false,
+          action: "same",
+          message: "The peak-hour setting is identical to existing data."
+        });
+      }else{
+        // If the values are different, update the existing record with the new values
+        return res.json({
+          success: false,
+          action: "update",
+          oldWasher: existRecord.washer_max,
+          oldDryer: existRecord.dryer_max,
+          message: "This time slot already exists, limit value changed."
+        });
+      }
+    }
+
+    // If no existing record is found, insert a new peak-hour setting
+    await supabase.from("Peak_Hour_Setting").insert([
+      {
+        week_day: week_day,
+        start_hour: start_hour,
+        end_hour: end_hour,
+        washer_max: washer_max,
+        dryer_max: dryer_max,
+        is_active: true
+      }
+    ]);
+
+    res.json({ success: true, action: "insert", message: "Peak-hour setting saved successfully." });
+  } catch (err) {
+    // Handle the specific error code for unique constraint violation (PGRST116)
+    if(err.code === "PGRST116"){
+      await supabase.from("Peak_Hour_Setting").insert([
+        {
+          week_day: req.body.week_day,
+          start_hour: req.body.start_hour,
+          end_hour: req.body.end_hour,
+          washer_max: req.body.washer_max,
+          dryer_max: req.body.dryer_max,
+          is_active: true
+        }
+      ]);
+      return res.json({ success: true, action: "insert", message: "Peak-hour setting saved successfully." });
+    }
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/admin/update-peak-limit
+app.post("/api/admin/update-peak-limit", async (req, res) => {
+  const { week_day, start_hour, washer_max, dryer_max } = req.body;
+  await supabase
+    .from("Peak_Hour_Setting")
+    .update({ washer_max: washer_max, dryer_max: dryer_max })
+    .eq("week_day", week_day)
+    .eq("start_hour", start_hour);
+
+  res.json({ success: true, message: "Peak-hour limits updated successfully." });
 });
 
 // test endpoint to verify backend and database connection

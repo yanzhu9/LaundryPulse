@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'pages/login_page.dart';
 import 'pages/register_page.dart';
 import 'pages/welcome_page.dart';
+import 'pages/reset_password_page.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
@@ -10,7 +11,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/foundation.dart';
-import 'pages/reset_password_page.dart';
 import 'pages/admin.dart';
 
 enum MachineStatus {
@@ -121,8 +121,11 @@ class _MyAppState extends State<MyApp> {
       routes: {
         '/login':    (context) => const LoginPage(),
         '/register': (context) => const RegisterPage(),
+        '/reset-password': (context) => const ResetPasswordPage(),
         '/welcome':  (context) => const WelcomePage(),
         '/home':     (context) => const MyHomePage(),
+        '/admin':    (context) => const Admin(),
+        '/admin-setting': (context) => const AdminSettingPage(),
       },
     );
   }
@@ -253,31 +256,138 @@ class _FaultReportPageState extends State<FaultReportPage> {
 }
 
   // if the user confirms submission, this function will be called to handle the backend logic (currently only commented) and provide UI feedback
-  void handleSubmitSuccess() {
-    // ====================== Backend Logic ======================
-    /*
-    Backend needs to complete the following operations:
-    1. Create a new FaultReportRecord and save it to the database, recording the user, machine, fault description, and timestamp
-    2. Update the corresponding machine table, changing the machine status to out_of_service
-    3. Query all administrator users with role=admin, and push FCM fault alerts in bulk
-    */
-    // ===================================================================
+  void handleSubmitSuccess() async {
+  // 
+  final String facilityType = machineTypeCtrl.text.trim();
+  final String facilityNumber = machineNoCtrl.text.trim();
+  final String faultDesc = faultDescCtrl.text.trim();
 
-    // UI feedback
+  // 1. check if any input field is empty
+  if (facilityType.isEmpty || facilityNumber.isEmpty || faultDesc.isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text("Fault report submitted successfully!"),
-        backgroundColor: Colors.green,
+        content: Text("All input fields cannot be empty"),
+        backgroundColor: Colors.red,
         duration: Duration(seconds: 2),
       ),
     );
-    // clear the input fields
-    machineTypeCtrl.clear();
-    machineNoCtrl.clear();
-    faultDescCtrl.clear();
-    // navigate back to the previous page (HomePage)
-    if (mounted) Navigator.pop(context);
+    return;
   }
+
+  // 2. check if the facility type is valid (washer, dryer, locker)
+  final List<String> allowTypeList = ["washer", "dryer", "locker"];
+  if (!allowTypeList.contains(facilityType)) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Facility Type only support lowercase: washer / dryer / locker"),
+        backgroundColor: Colors.red,
+        duration: Duration(seconds: 2),
+      ),
+    );
+    return;
+  }
+
+  bool formatPass = true;
+  String formatErrMsg = "";
+  RegExp washerReg = RegExp(r'^W-(0[1-6])$');
+  RegExp dryerReg = RegExp(r'^D-(0[1-6])$');
+  RegExp lockerReg = RegExp(r'^\d+$');
+
+  // 3. check if the facility number format is valid based on the facility type
+  switch(facilityType){
+    case "washer":
+      if (!washerReg.hasMatch(facilityNumber)) {
+        formatPass = false;
+        formatErrMsg = "Washer format must be W-01 ~ W-06 (capital W + hyphen + two digits 01~06)";
+      }
+      break;
+    case "dryer":
+      if (!dryerReg.hasMatch(facilityNumber)) {
+        formatPass = false;
+        formatErrMsg = "Dryer format must be D-01 ~ D-06 (capital D + hyphen + two digits 01~06)";
+      }
+      break;
+    case "locker":
+      if (!lockerReg.hasMatch(facilityNumber)) {
+        formatPass = false;
+        formatErrMsg = "Locker number only pure digits, no letters/hyphen";
+      }
+      break;
+  }
+
+  if (!formatPass) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(formatErrMsg),
+        backgroundColor: Colors.red,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+    return;
+  }
+
+  // get the logged-in user ID
+  final String? submitUserId = current_user_id;
+  if (submitUserId == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text("Please log in before submitting a fault report"),
+        backgroundColor: Colors.red,
+        duration: Duration(seconds: 2),
+      ),
+    );
+    return;
+  }
+
+  final String apiUrl = "https://laundrypulse.onrender.com/api/create-fault-report";
+
+  try {
+    final Map<String, dynamic> requestBody = {
+      "facilityType": facilityType,
+      "facilityNumber": facilityNumber,
+      "faultDesc": faultDesc,
+      "submitUserId": submitUserId,
+    };
+
+    final Map<String, String> headers = {
+      "Content-Type": "application/json; charset=utf-8",
+    };
+
+    final http.Response response = await http.post(
+      Uri.parse(apiUrl),
+      headers: headers,
+      body: jsonEncode(requestBody),
+    );
+
+    final Map<String, dynamic> resData = jsonDecode(response.body);
+
+    if (resData["success"] == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Fault report submitted successfully!"),
+          backgroundColor: Colors.green,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      machineTypeCtrl.clear();
+      machineNoCtrl.clear();
+      faultDescCtrl.clear();
+      if (mounted) Navigator.pop(context);
+    } else {
+      throw resData["msg"] ?? "Submit failed";
+    }
+  } catch (err){
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Submit failed: ${err.toString()}"),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+}
 
   @override
   Widget build(BuildContext context) {
@@ -301,7 +411,7 @@ class _FaultReportPageState extends State<FaultReportPage> {
             TextField(
               controller: machineTypeCtrl,
               decoration: const InputDecoration(
-                hintText: "Example: Washer / Dryer / Locker",
+                hintText: "Example: washer / dryer / locker",
                 border: OutlineInputBorder(),
                 contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
               ),
@@ -317,7 +427,7 @@ class _FaultReportPageState extends State<FaultReportPage> {
             TextField(
               controller: machineNoCtrl,
               decoration: const InputDecoration(
-                hintText: "Example: W-02 / D-05",
+                hintText: "Example: W-02 / D-05 / 1",
                 border: OutlineInputBorder(),
                 contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
               ),
@@ -594,7 +704,18 @@ void dispose() {
               onPressed: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (context) => const HeatMapPage()),
+                  MaterialPageRoute(
+                    // HeatMapPage has no AppBar of its own (it normally lives
+                    // inside the tab scaffold), so wrap it to get a back button.
+                    builder: (context) => Scaffold(
+                      appBar: AppBar(
+                        backgroundColor: const Color.fromARGB(255, 215, 230, 243),
+                        centerTitle: true,
+                        title: const Text("HeatMap"),
+                      ),
+                      body: const HeatMapPage(),
+                    ),
+                  ),
                 );
               },
               child: const Text("View full heatmap →"),
@@ -689,82 +810,259 @@ class QueuePage extends StatefulWidget {
 class _QueuePageState extends State<QueuePage> {
   bool autoTransfer = false;
 
-  Future<void> queueWasher() async {
+  // current view type: "washer" or "dryer", default to "washer"
+  String viewType = "washer";
 
-  String url = "https://laundrypulse-gf1v.onrender.com/api/queue-book";
+  // Queue overview data
+  int peopleInQueue = 0;
+  int earliestReadyMin = 0;
+  bool isUserInQueue = false;
+  int peopleAhead = 0;
 
-  final res = await http.post(
-    Uri.parse(url),
-    headers: {"Content-Type":"application/json"},
-    body: jsonEncode({
-      "user_id": current_user_id,
-      "type": "washer"
-    })
-  );
+  // User's queue status for washer and dryer
+  bool inWasherQueue = false;
+  bool inDryerQueue = false;
 
-  var result = jsonDecode(res.body);
+  late Timer refreshTimer;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-       SnackBar(content: Text(result["message"]))
-      );
+  @override
+  void initState() {
+    super.initState();
+    loadQueueOverview();
+    // Set up a timer to refresh the queue overview every 30 seconds
+    refreshTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      loadQueueOverview();
+    });
+  }
+
+  @override
+  void dispose() {
+    refreshTimer.cancel();
+    super.dispose();
+  }
+
+  // Load queue overview data from the backend API
+  Future<void> loadQueueOverview() async {
+    String url =
+        "https://laundrypulse-gf1v.onrender.com/api/get-queue-overview?user_id=$current_user_id&type=$viewType";
+    final response = await http.get(Uri.parse(url));
+    var data = jsonDecode(response.body);
+
+    if(mounted) {
+      setState(() {
+        peopleInQueue = data["peopleInQueue"];
+        earliestReadyMin = data["earliestReadyMin"];
+        isUserInQueue = data["isUserInQueue"];
+        peopleAhead = data["peopleAhead"];
+        inWasherQueue = data["isInWasher"];
+        inDryerQueue = data["isInDryer"];
+      });
     }
+  }
 
-Future<void> queueDryer() async {
+  // Queue for washer
+  Future<void> queueWasher() async {
+    String url = "https://laundrypulse-gf1v.onrender.com/api/queue-book";
 
-  String url = "https://laundrypulse-gf1v.onrender.com/api/queue-book";
-
-  final res = await http.post(
-    Uri.parse(url),
-    headers: {"Content-Type":"application/json"},
-    body: jsonEncode({
-      "user_id": current_user_id,
-      "type": "dryer"
-    })
-  );
-
-  var result = jsonDecode(res.body);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-       SnackBar(content: Text(result["message"]))
+    final res = await http.post(
+      Uri.parse(url),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "user_id": current_user_id,
+        "type": "washer"
+      })
     );
+
+    var result = jsonDecode(res.body);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result["message"])),
+    );
+    // Reload the queue overview to reflect the updated status
+    loadQueueOverview();
+  }
+
+  Future<void> queueDryer() async {
+    String url = "https://laundrypulse-gf1v.onrender.com/api/queue-book";
+
+    final res = await http.post(
+      Uri.parse(url),
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "user_id": current_user_id,
+        "type": "dryer"
+      })
+    );
+
+    var result = jsonDecode(res.body);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result["message"])),
+    );
+    loadQueueOverview();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-  padding: const EdgeInsets.all(24.0),
-  child: Column(
-    mainAxisAlignment: MainAxisAlignment.start,
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      const SizedBox(height: 40),
+    return Scaffold(
+      body: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+        child: Column(
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            setState(() => viewType = "washer");
+                            loadQueueOverview();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            decoration: BoxDecoration(
+                              color: viewType == "washer" ? Colors.blueAccent : Colors.white,
+                              borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                            ),
+                            child: Text(
+                              "Washer Queue",
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: viewType == "washer" ? Colors.white : Colors.black87,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            setState(() => viewType = "dryer");
+                            loadQueueOverview();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            decoration: BoxDecoration(
+                              color: viewType == "dryer" ? Colors.blueAccent : Colors.white,
+                              borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                            ),
+                            child: Text(
+                              "Dryer Queue",
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: viewType == "dryer" ? Colors.white : Colors.black87,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
 
-      ElevatedButton(
-        onPressed: () {
-          queueWasher();
-        },
-        style: ElevatedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 22),
+                  Padding(
+                    padding: const EdgeInsets.all(22),
+                    child: Column(
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                            child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                            Text(
+                              "People in queue: $peopleInQueue",
+                              style: const TextStyle(fontSize: 16, color: Colors.black87),
+                            ),
+                          const SizedBox(height: 16),
+                            Text(
+                              "Earliest machine ready in: $earliestReadyMin min",
+                              style: const TextStyle(fontSize: 16, color: Colors.black87),
+                        ),
+                        if (isUserInQueue) ...[
+                          const SizedBox(height: 16),
+                          Text(
+                            "People ahead of you: $peopleAhead",
+                            style: const TextStyle(fontSize: 16, color: Colors.black87),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Icon(
+                    viewType == "washer"
+                    ? Icons.local_laundry_service
+                    : Icons.water_damage_outlined,
+                    color: Colors.blueGrey,
+                    size: 100,
+                  ),
+                ],
+                        )
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 40),
+
+            ElevatedButton(
+              onPressed: inWasherQueue ? null : queueWasher,
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                minimumSize: const Size(double.infinity, 40),
+              ),
+              child: const Text("Queue for Washer", style: TextStyle(fontSize: 17)),
+            ),
+
+            const SizedBox(height: 25),
+
+            ElevatedButton(
+              onPressed: inDryerQueue ? null : queueDryer,
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 18),
+                minimumSize: const Size(double.infinity, 40),
+              ),
+              child: const Text("Queue for Dryer", style: TextStyle(fontSize: 17)),
+            ),
+
+            const SizedBox(height: 35),
+            Container(
+              margin: const EdgeInsets.symmetric(horizontal: 8),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: const [
+                  Text(
+                    "Note",
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Colors.black54),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    "If people in queue remains the same while waiting time rises, certain machines are overdue and temporarily unavailable.",
+                    style: TextStyle(fontSize: 12.5, color: Color.fromARGB(255, 117, 117, 117), height: 1.45),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        child: const Text("Queue for Washer", style: TextStyle(fontSize: 17)),
       ),
-
-      const SizedBox(height: 25),
-
-      ElevatedButton(
-        onPressed: () {
-          queueDryer();
-        },
-        style: ElevatedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(vertical: 22),
-        ),
-        child: const Text("Queue for Dryer", style: TextStyle(fontSize: 17)),
-      ),
-
-      const SizedBox(height: 40),
-    ],
-  ),
-);
+    );
   }
 }
 
