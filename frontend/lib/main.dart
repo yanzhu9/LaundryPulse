@@ -9,6 +9,7 @@ import 'pages/globals.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:intl/intl.dart';
+import 'package:flutter/foundation.dart';
 
 enum MachineStatus {
   available,
@@ -45,7 +46,19 @@ final GlobalKey<NavigatorState> rootNavigatorKey =
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (kIsWeb) {
+  FirebaseOptions webConfig = const FirebaseOptions(
+    apiKey: "AIzaSyDZQ0cQ0Pnv8uNlnuSN8C1q9bq_YrSA",
+    authDomain: "laundrypulse-94c35.firebaseapp.com",
+    projectId: "laundrypulse-94c35",
+    storageBucket: "laundrypulse-94c35.appspot.com",
+    messagingSenderId: "155150232780",
+    appId: "1:155150232780:web:f8e7224d24c9bccc6e6df9",
+  );
+  await Firebase.initializeApp(options: webConfig);
+} else {
   await Firebase.initializeApp();
+}
   // 注册后台消息处理器（必须在 runApp 之前）
   FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
   runApp(const MyApp());
