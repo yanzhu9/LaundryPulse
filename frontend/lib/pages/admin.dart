@@ -512,7 +512,7 @@ class __LockerTabViewState extends State<_LockerTabView> {
   }
 }
 
-  Future<void> fetchLockerData() async {
+Future<void> fetchLockerData() async {
     try {
       final res = await http.get(Uri.parse(lockerApi));
       if (res.statusCode == 200) {
