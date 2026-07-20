@@ -21,7 +21,14 @@ try {
 }
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: true,
+  credentials: true,
+  allowedHeaders: ["Content-Type"]
+}));
+app.options("*", (req, res) => {
+  res.sendStatus(200);
+});
 app.use(express.json());
 
 const supabaseUrl = process.env.SUPABASE_URL;
