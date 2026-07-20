@@ -127,8 +127,6 @@ A large circular timer counts down the remaining time. You can leave the page �
 2. You have a **15-minute pick-up window**.
 3. Tap **Pick Up ✓**. The machine returns to **Available**.
 
-![Pick up window](screenshots/pickup.png)
-
 > ⚠️ **If you don't collect within 15 minutes**, the machine becomes **Overdue** and another user may move your laundry to a locker so they can use the machine.
 
 ---
