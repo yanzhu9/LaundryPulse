@@ -824,6 +824,9 @@ class _QueuePageState extends State<QueuePage> {
   int earliestReadyMin = 0;
   bool isUserInQueue = false;
   int peopleAhead = 0;
+  // True when no machine of this type can serve the queue at all, because
+  // every one is overdue or out of service.
+  bool queueBlocked = false;
 
   // User's queue status for washer and dryer
   bool inWasherQueue = false;
@@ -862,6 +865,7 @@ class _QueuePageState extends State<QueuePage> {
         peopleAhead = data["peopleAhead"];
         inWasherQueue = data["isInWasher"];
         inDryerQueue = data["isInDryer"];
+        queueBlocked = data["queueBlocked"] == true;
       });
     }
   }
@@ -1071,10 +1075,33 @@ class _QueuePageState extends State<QueuePage> {
                               style: const TextStyle(fontSize: 16, color: Colors.black87),
                             ),
                           const SizedBox(height: 16),
-                            Text(
-                              "Earliest machine ready in: $earliestReadyMin min",
-                              style: const TextStyle(fontSize: 16, color: Colors.black87),
-                        ),
+                            // With every machine overdue or out of service there
+                            // is no ETA to give, so say so instead of showing
+                            // "0 min", which reads as "ready now".
+                            queueBlocked
+                                ? Row(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Icon(Icons.error_outline,
+                                          size: 18, color: Colors.orange.shade800),
+                                      const SizedBox(width: 6),
+                                      Expanded(
+                                        child: Text(
+                                          "No machines available right now",
+                                          style: TextStyle(
+                                            fontSize: 16,
+                                            color: Colors.orange.shade800,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                : Text(
+                                    "Earliest machine ready in: $earliestReadyMin min",
+                                    style: const TextStyle(
+                                        fontSize: 16, color: Colors.black87),
+                                  ),
                         if (isUserInQueue) ...[
                           const SizedBox(height: 16),
                           Text(
