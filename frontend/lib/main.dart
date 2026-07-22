@@ -206,188 +206,177 @@ class FaultReportPage extends StatefulWidget {
 }
 
 class _FaultReportPageState extends State<FaultReportPage> {
-  //three controllers for the three input fields
-  final TextEditingController machineTypeCtrl = TextEditingController();
-  final TextEditingController machineNoCtrl = TextEditingController();
+  // 用变量替代 TextEditingController 来保存选择的值
+  String? selectedFacilityType; // washer / dryer / locker
+  String? selectedFacilityNumber;
+
+  // 只有 faultDesc 还需要 TextEditingController（多行文本输入）
   final TextEditingController faultDescCtrl = TextEditingController();
 
-  // Dispose controllers to avoid memory leaks
+  // 三种设备的编号列表
+  final List<String> washerNumbers = ['W-01', 'W-02', 'W-03', 'W-04', 'W-05', 'W-06'];
+  final List<String> dryerNumbers  = ['D-01', 'D-02', 'D-03', 'D-04', 'D-05', 'D-06'];
+  final List<String> lockerNumbers = ['1', '2', '3', '4', '5', '6'];
+
+  // 根据选择的 facility type 返回对应的编号列表
+  List<String> get currentNumberList {
+    switch (selectedFacilityType) {
+      case 'washer':
+        return washerNumbers;
+      case 'dryer':
+        return dryerNumbers;
+      case 'locker':
+        return lockerNumbers;
+      default:
+        return [];
+    }
+  }
+
   @override
   void dispose() {
-    machineTypeCtrl.dispose();
-    machineNoCtrl.dispose();
     faultDescCtrl.dispose();
     super.dispose();
   }
 
-  // confirmation dialog before submitting the fault report
+  // 当 facility type 改变时，重置 facility number 的选择
+  void onFacilityTypeChanged(String? newType) {
+    setState(() {
+      selectedFacilityType = newType;
+      selectedFacilityNumber = null; // 切换类型时清空编号选择
+    });
+  }
+
+  // 确认弹窗
   void openConfirmDialog() {
-  showDialog(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: const Text("Submit Fault Report?"),
-      actions: [
-        // if user clicks Yes, close the dialog and call handleSubmitSuccess()
-        ElevatedButton(
-          onPressed: () {
-            Navigator.pop(dialogContext);
-            handleSubmitSuccess();
-          },
-          child: const Text("Yes"),
-        ),
-        // if user clicks No, just close the dialog and show a cancellation SnackBar
-        TextButton(
-          onPressed: () {
-            Navigator.pop(dialogContext);
-            // show a cancellation SnackBar
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text("Fault report submission cancelled"),
-                backgroundColor: Colors.grey,
-                duration: Duration(seconds: 1),
-              ),
-            );
-          },
-          child: const Text("No"),
-        ),
-      ],
-    ),
-  );
-}
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text("Submit Fault Report?"),
+        actions: [
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              handleSubmitSuccess();
+            },
+            child: const Text("Yes"),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("Fault report submission cancelled"),
+                  backgroundColor: Colors.grey,
+                  duration: Duration(seconds: 1),
+                ),
+              );
+            },
+            child: const Text("No"),
+          ),
+        ],
+      ),
+    );
+  }
 
-  // if the user confirms submission, this function will be called to handle the backend logic (currently only commented) and provide UI feedback
   void handleSubmitSuccess() async {
-  // 
-  final String facilityType = machineTypeCtrl.text.trim();
-  final String facilityNumber = machineNoCtrl.text.trim();
-  final String faultDesc = faultDescCtrl.text.trim();
+    final String facilityType = selectedFacilityType ?? '';
+    final String facilityNumber = selectedFacilityNumber ?? '';
+    final String faultDesc = faultDescCtrl.text.trim();
 
-  // 1. check if any input field is empty
-  if (facilityType.isEmpty || facilityNumber.isEmpty || faultDesc.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text("All input fields cannot be empty"),
-        backgroundColor: Colors.red,
-        duration: Duration(seconds: 2),
-      ),
-    );
-    return;
-  }
-
-  // 2. check if the facility type is valid (washer, dryer, locker)
-  final List<String> allowTypeList = ["washer", "dryer", "locker"];
-  if (!allowTypeList.contains(facilityType)) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text("Facility Type only support lowercase: washer / dryer / locker"),
-        backgroundColor: Colors.red,
-        duration: Duration(seconds: 2),
-      ),
-    );
-    return;
-  }
-
-  bool formatPass = true;
-  String formatErrMsg = "";
-  RegExp washerReg = RegExp(r'^W-(0[1-6])$');
-  RegExp dryerReg = RegExp(r'^D-(0[1-6])$');
-  RegExp lockerReg = RegExp(r'^\d+$');
-
-  // 3. check if the facility number format is valid based on the facility type
-  switch(facilityType){
-    case "washer":
-      if (!washerReg.hasMatch(facilityNumber)) {
-        formatPass = false;
-        formatErrMsg = "Washer format must be W-01 ~ W-06 (capital W + hyphen + two digits 01~06)";
-      }
-      break;
-    case "dryer":
-      if (!dryerReg.hasMatch(facilityNumber)) {
-        formatPass = false;
-        formatErrMsg = "Dryer format must be D-01 ~ D-06 (capital D + hyphen + two digits 01~06)";
-      }
-      break;
-    case "locker":
-      if (!lockerReg.hasMatch(facilityNumber)) {
-        formatPass = false;
-        formatErrMsg = "Locker number only pure digits, no letters/hyphen";
-      }
-      break;
-  }
-
-  if (!formatPass) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(formatErrMsg),
-        backgroundColor: Colors.red,
-        duration: const Duration(seconds: 2),
-      ),
-    );
-    return;
-  }
-
-  // get the logged-in user ID
-  final String? submitUserId = current_user_id;
-  if (submitUserId == null) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text("Please log in before submitting a fault report"),
-        backgroundColor: Colors.red,
-        duration: Duration(seconds: 2),
-      ),
-    );
-    return;
-  }
-
-  final String apiUrl = "https://laundrypulse.onrender.com/api/create-fault-report";
-
-  try {
-    final Map<String, dynamic> requestBody = {
-      "facilityType": facilityType,
-      "facilityNumber": facilityNumber,
-      "faultDesc": faultDesc,
-      "submitUserId": submitUserId,
-    };
-
-    final Map<String, String> headers = {
-      "Content-Type": "application/json; charset=utf-8",
-    };
-
-    final http.Response response = await http.post(
-      Uri.parse(apiUrl),
-      headers: headers,
-      body: jsonEncode(requestBody),
-    );
-
-    final Map<String, dynamic> resData = jsonDecode(response.body);
-
-    if (resData["success"] == true) {
+    // 1. 检查是否都已选择/填写
+    if (facilityType.isEmpty || facilityNumber.isEmpty || faultDesc.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Fault report submitted successfully!"),
-          backgroundColor: Colors.green,
+          content: Text("All fields must be selected/filled"),
+          backgroundColor: Colors.red,
           duration: Duration(seconds: 2),
         ),
       );
-      machineTypeCtrl.clear();
-      machineNoCtrl.clear();
-      faultDescCtrl.clear();
-      if (mounted) Navigator.pop(context);
-    } else {
-      throw resData["msg"] ?? "Submit failed";
+      return;
     }
-  } catch (err){
-    if (mounted) {
+
+    // 2. 检查 facility type 有效性（下拉选择基本不会出错，但保留校验）
+    final List<String> allowTypeList = ["washer", "dryer", "locker"];
+    if (!allowTypeList.contains(facilityType)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Submit failed: ${err.toString()}"),
+        const SnackBar(
+          content: Text("Facility Type only supports: washer / dryer / locker"),
           backgroundColor: Colors.red,
-          duration: const Duration(seconds: 3),
+          duration: Duration(seconds: 2),
         ),
       );
+      return;
+    }
+
+    // 3. 因为现在是下拉选择，编号格式必然正确，可以跳过正则校验
+    // （如果你仍想保留正则校验兜底，也可以留着）
+
+    // 4. 检查是否登录
+    final String? submitUserId = current_user_id;
+    if (submitUserId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Please log in before submitting a fault report"),
+          backgroundColor: Colors.red,
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    // 5. 发送 API 请求
+    final String apiUrl = "https://laundrypulse.onrender.com/api/create-fault-report";
+
+    try {
+      final Map<String, dynamic> requestBody = {
+        "facilityType": facilityType,
+        "facilityNumber": facilityNumber,
+        "faultDesc": faultDesc,
+        "submitUserId": submitUserId,
+      };
+
+      final Map<String, String> headers = {
+        "Content-Type": "application/json; charset=utf-8",
+      };
+
+      final http.Response response = await http.post(
+        Uri.parse(apiUrl),
+        headers: headers,
+        body: jsonEncode(requestBody),
+      );
+
+      final Map<String, dynamic> resData = jsonDecode(response.body);
+
+      if (resData["success"] == true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Fault report submitted successfully!"),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+        // 重置所有字段
+        setState(() {
+          selectedFacilityType = null;
+          selectedFacilityNumber = null;
+        });
+        faultDescCtrl.clear();
+        if (mounted) Navigator.pop(context);
+      } else {
+        throw resData["msg"] ?? "Submit failed";
+      }
+    } catch (err) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Submit failed: ${err.toString()}"),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     }
   }
-}
 
   @override
   Widget build(BuildContext context) {
@@ -402,41 +391,58 @@ class _FaultReportPageState extends State<FaultReportPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // 1. Facility type input area
+            // ========== 1. Facility Type 下拉选择 ==========
             const Text(
               "Facility Type",
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 8),
-            TextField(
-              controller: machineTypeCtrl,
+            DropdownButtonFormField<String>(
+              value: selectedFacilityType,
               decoration: const InputDecoration(
-                hintText: "Example: washer / dryer / locker",
+                hintText: "Select facility type",
                 border: OutlineInputBorder(),
                 contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
               ),
+              items: const [
+                DropdownMenuItem(value: "washer", child: Text("washer")),
+                DropdownMenuItem(value: "dryer", child: Text("dryer")),
+                DropdownMenuItem(value: "locker", child: Text("locker")),
+              ],
+              onChanged: onFacilityTypeChanged,
             ),
             const SizedBox(height: 22),
 
-            // 2. Facility Number input area
+            // ========== 2. Facility Number 下拉选择（联动） ==========
             const Text(
               "Facility Number",
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 8),
-            TextField(
-              controller: machineNoCtrl,
+            DropdownButtonFormField<String>(
+              value: selectedFacilityNumber,
               decoration: const InputDecoration(
-                hintText: "Example: W-02 / D-05 / 1",
+                hintText: "Select facility number",
                 border: OutlineInputBorder(),
                 contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
               ),
+              items: currentNumberList.map((num) {
+                return DropdownMenuItem(value: num, child: Text(num));
+              }).toList(),
+              onChanged: selectedFacilityType == null
+                  ? null // 还没选 type 时禁用
+                  : (value) {
+                      setState(() {
+                        selectedFacilityNumber = value;
+                      });
+                    },
+              disabledHint: const Text("Please select facility type first"),
             ),
             const SizedBox(height: 22),
 
-            // 3. Facility Description (Multi-line input)
+            // ========== 3. Fault Description 多行输入 ==========
             const Text(
-              "Facility Description (Please describe in detail)",
+              "Fault Description (Please describe in detail)",
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 8),
@@ -452,7 +458,7 @@ class _FaultReportPageState extends State<FaultReportPage> {
             ),
             const SizedBox(height: 40),
 
-            // 4. Submit button
+            // ========== 4. 提交按钮 ==========
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
