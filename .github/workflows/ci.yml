@@ -34,12 +34,13 @@ jobs:
         run: npm run test:unit
 
   backend-api-tests:
-    name: Backend API tests (non-blocking)
+    name: Backend API tests
     runs-on: ubuntu-latest
-    # These call the deployed Render backend, which sleeps when idle and can
-    # take a while to wake. They are useful signal but too flaky to gate a
-    # merge on, so a failure is reported without failing the build.
-    continue-on-error: true
+    # These call the deployed Render backend, which sleeps when idle, so the
+    # job wakes it first and the tests allow 30s each. They only assert on
+    # contract-level behaviour (status codes, response shape, validation), not
+    # on specific rows, so they do not depend on what the live data happens to
+    # look like.
     defaults:
       run:
         working-directory: backend
@@ -59,7 +60,7 @@ jobs:
         run: curl -s -m 120 --retry 3 --retry-delay 15 https://laundrypulse-gf1v.onrender.com/ || true
 
       - name: Run API tests
-        run: npx jest tests --testPathIgnorePatterns tests/unit
+        run: npm run test:api
 
   frontend-analyze:
     name: Frontend analyze

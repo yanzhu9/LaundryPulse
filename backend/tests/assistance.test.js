@@ -4,14 +4,14 @@ const server = request('https://laundrypulse.onrender.com');
 describe('Assistance Record Related APIs (Help collect laundry & review)', () => {
 
   test('check-active-assist returns standard json when machine_id is empty', async () => {
-    const res = await server.get('/api/check-active-assist');
+    const res = await server.get('/api/check-active-assistance');
     expect(res.statusCode).toBe(200);
     expect(res.body.success).toBe(false);
     expect(res.body).toHaveProperty('has_active_assist');
   });
 
   test('check-active-assist with machine parameter returns correct structure', async () => {
-    const res = await server.get('/api/check-active-assist?machine_id=W-01');
+    const res = await server.get('/api/check-active-assistance?machine_id=W-01');
     expect(res.statusCode).toBe(200);
     expect(typeof res.body.has_active_assist).toBe('boolean');
   });
@@ -82,10 +82,22 @@ describe('Assistance Record Related APIs (Help collect laundry & review)', () =>
     expect(res.body.success).toBe(false);
   });
 
+  // overdue_user_id is a uuid column, so a non-uuid value is rejected by
+  // Postgres before any lookup happens. Use a well-formed uuid that cannot
+  // exist to exercise the "user has nothing to review" path.
   test('get pending review list with user id returns array structure', async () => {
-    const res = await server.get('/api/get-pending-review-list?overdue_user_id=user101');
+    const res = await server.get(
+      '/api/get-pending-review-list?overdue_user_id=00000000-0000-0000-0000-000000000000'
+    );
     expect(res.statusCode).toBe(200);
+    expect(res.body.success).toBe(true);
     expect(Array.isArray(res.body.pending_list)).toBe(true);
+  });
+
+  test('get pending review list rejects a malformed user id', async () => {
+    const res = await server.get('/api/get-pending-review-list?overdue_user_id=not-a-uuid');
+    expect(res.statusCode).toBe(200);
+    expect(res.body.success).toBe(false);
   });
 
 });
