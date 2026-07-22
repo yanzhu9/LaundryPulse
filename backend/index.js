@@ -4,6 +4,7 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const cors = require('cors');
 const admin = require('firebase-admin');
+const { runWashFinishChecker } = require('./logic/washFinish');
 
 let adminInitialized = false;
 try {
@@ -956,129 +957,10 @@ setInterval(async () => {
 }, 5000);
 
 // Check every 5 seconds: if a machine's finished_at has passed but pickup_end_at is not set → set pickup_end_at = now + 15 minutes and mark as waiting for pickup
-setInterval(async () => {
-  const now = new Date();
-  // 补充 current_user_id，用于发送"洗完了请取件"通知
-  const { data: washingEndList } = await supabase
-    .from("Machine_Table")
-    .select("machine_id, finished_at, pickup_end_at, current_user_id")
-    .eq("machine_status", "occupied")
-    .not("finished_at", "is", null)
-    .is("pickup_end_at", null);
-
-  if (!washingEndList) return;
-
-  for (const m of washingEndList) {
-    const finishTime = new Date(m.finished_at);
-    if (now < finishTime) continue;
-
-    const pickupEndDate = new Date(Date.now() + 15 * 60 * 1000);
-    const pickupEnd = pickupEndDate.toISOString();
-    await supabase
-      .from("Machine_Table")
-      .update({
-        pickup_end_at: pickupEnd,
-        finished_at: null // clear finished_at since washing is done, now it's in pickup waiting state
-      })
-      .eq("machine_id", m.machine_id);
-
-    // 洗涤结束，通知用户在 15 分钟内来取衣服
-    await sendNotification(
-      m.current_user_id,
-      'Laundry Done',
-      `Your laundry in Machine ${m.machine_id} is done. Please collect it within 15 minutes.`
-    );
-    console.log(`Machine ${m.machine_id} wash finished, 15-minute pickup window started`);
-
-    // Update the booking status to "finished" for this machine, so the booking record reflects that the wash cycle has completed.
-    await supabase
-      .from("Booking_Table")
-      .update({ booking_status: "finished" })
-      .eq("machine_id", m.machine_id)
-      .eq("booking_status", "using");
-    
-    // Optional auto dryer queue transfer:
-    // If the user opted in for a dryer when starting this washer cycle, automatically
-    // reserve a dryer (or queue them) the moment the wash finishes, so they only make one trip.
-    // Only washers trigger this; dryers do not transfer again.
-    if (m.machine_id.startsWith('W')) {
-      // Find the active booking for this washer to read the dryer preference
-      const { data: washBooking } = await supabase
-        .from("Booking_Table")
-        .select("booking_id, needs_dryer, dryer_transferred")
-        .eq("machine_id", m.machine_id)
-        .eq("booking_status", "using")
-        .limit(1)
-        .single();
-
-      if (washBooking?.needs_dryer && !washBooking.dryer_transferred) {
-        // Look for an available dryer
-        const { data: freeDryers } = await supabase
-          .from("Machine_Table")
-          .select("machine_id")
-          .eq("machine_type", "dryer")
-          .eq("machine_status", "available")
-          .order("machine_id", { ascending: true });
-
-        if (freeDryers && freeDryers.length > 0) {
-          const dryerId = freeDryers[0].machine_id;
-          // Reserve the dryer using the same 15-min window as the washer pickup,
-          // so the user moves clothes from washer to dryer in a single trip
-          await supabase
-            .from("Machine_Table")
-            .update({
-              machine_status: "occupied",
-              reserved_end_at: pickupEnd,
-              finished_at: null,
-              pickup_end_at: null,
-              current_user_id: m.current_user_id
-            })
-            .eq("machine_id", dryerId);
-
-          // Create a booking record for the reserved dryer
-          await supabase.from("Booking_Table").insert([
-            {
-              user_id: m.current_user_id,
-              machine_id: dryerId,
-              booking_status: "using"
-            }
-          ]);
-
-          await sendNotification(
-            m.current_user_id,
-            'Dryer Reserved',
-            `Dryer ${dryerId} has been reserved for you. Please move your laundry there within 15 minutes.`
-          );
-          console.log(`Auto-transfer: dryer ${dryerId} reserved for user ${m.current_user_id}`);
-        } else {
-          // No dryer free → add the user to the dryer waiting queue.
-          // machine_type must be set so allocateWaitingQueueToMachine() picks them up
-          // when a dryer is later released.
-          await supabase.from("Booking_Table").insert([
-            {
-              user_id: m.current_user_id,
-              machine_type: "dryer",
-              booking_status: "waiting",
-              needs_dryer: true
-            }
-          ]);
-
-          await sendNotification(
-            m.current_user_id,
-            'Added to Dryer Queue',
-            'No dryer is available right now. You have been added to the dryer queue and will be notified when one is ready.'
-          );
-          console.log(`Auto-transfer: user ${m.current_user_id} added to dryer queue`);
-        }
-
-        // Mark transfer as done so this timer does not process it again
-        await supabase
-          .from("Booking_Table")
-          .update({ dryer_transferred: true })
-          .eq("booking_id", washBooking.booking_id);
-      }
-    }
-  }
+setInterval(() => {
+  runWashFinishChecker({ supabase, sendNotification }).catch((err) =>
+    console.error("[WashFinish] Error:", err.message)
+  );
 }, 5000);
 
 // if pickup_end_at has passed but user hasn't confirmed pickup → mark as overdue and send notification
