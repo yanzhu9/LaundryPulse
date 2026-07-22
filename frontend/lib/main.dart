@@ -900,6 +900,88 @@ class _QueuePageState extends State<QueuePage> {
     loadQueueOverview();
   }
 
+  // Leave a queue the user is still waiting in. Confirmed first, because
+  // leaving gives up their place and rejoining puts them at the back.
+  Future<void> leaveQueue(String type) async {
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text("Leave the $type queue?"),
+        content: const Text(
+          "You will lose your place in line. If you join again later you will "
+          "start from the back of the queue.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Stay in queue"),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text("Leave", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final res = await http.post(
+        Uri.parse("https://laundrypulse-gf1v.onrender.com/api/queue-cancel"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "user_id": current_user_id,
+          "type": type,
+        }),
+      );
+
+      final result = jsonDecode(res.body);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result["message"] ?? "Failed to leave the queue"),
+            backgroundColor:
+                result["success"] == true ? Colors.green : Colors.red,
+          ),
+        );
+      }
+      loadQueueOverview();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Failed to leave the queue. Please try again."),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // One button per machine type. It joins the queue, and once the user is in
+  // it turns into a way back out instead of just greying out.
+  Widget buildQueueButton({
+    required bool inQueue,
+    required String label,
+    required Future<void> Function() onJoin,
+  }) {
+    return ElevatedButton(
+      onPressed: inQueue ? () => leaveQueue(label.toLowerCase()) : onJoin,
+      style: ElevatedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(vertical: 18),
+        minimumSize: const Size(double.infinity, 40),
+        backgroundColor: inQueue ? Colors.red.shade50 : null,
+        foregroundColor: inQueue ? Colors.red.shade700 : null,
+      ),
+      child: Text(
+        inQueue ? "Leave $label Queue" : "Queue for $label",
+        style: const TextStyle(fontSize: 17),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1016,24 +1098,18 @@ class _QueuePageState extends State<QueuePage> {
 
             const SizedBox(height: 40),
 
-            ElevatedButton(
-              onPressed: inWasherQueue ? null : queueWasher,
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 18),
-                minimumSize: const Size(double.infinity, 40),
-              ),
-              child: const Text("Queue for Washer", style: TextStyle(fontSize: 17)),
+            buildQueueButton(
+              inQueue: inWasherQueue,
+              label: "Washer",
+              onJoin: queueWasher,
             ),
 
             const SizedBox(height: 25),
 
-            ElevatedButton(
-              onPressed: inDryerQueue ? null : queueDryer,
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 18),
-                minimumSize: const Size(double.infinity, 40),
-              ),
-              child: const Text("Queue for Dryer", style: TextStyle(fontSize: 17)),
+            buildQueueButton(
+              inQueue: inDryerQueue,
+              label: "Dryer",
+              onJoin: queueDryer,
             ),
 
             const SizedBox(height: 35),

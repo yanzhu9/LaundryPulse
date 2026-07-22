@@ -587,6 +587,71 @@ app.get("/api/get-queue-overview", async (req, res) => {
   }
 });
 
+// POST /api/queue-cancel
+// Lets a user leave a queue they are still waiting in.
+//
+// Only bookings that are purely waiting (booking_status = "waiting" with no
+// machine assigned) can be cancelled here. Once a machine has been allocated
+// the booking is "using" and the user holds a 15-minute reservation - giving
+// that up is a different action and is deliberately not handled by this route,
+// so a user cannot silently drop a machine that others are queuing for.
+app.post("/api/queue-cancel", async (req, res) => {
+  try {
+    const { user_id, type } = req.body;
+
+    if (!user_id || !type) {
+      return res.json({ success: false, message: "user_id and type are required" });
+    }
+    if (type !== "washer" && type !== "dryer") {
+      return res.json({ success: false, message: "type must be washer or dryer" });
+    }
+
+    // Find the user's waiting entry for this machine type
+    const { data: waitingBookings, error: findErr } = await supabase
+      .from("Booking_Table")
+      .select("booking_id")
+      .eq("user_id", user_id)
+      .eq("machine_type", type)
+      .eq("booking_status", "waiting")
+      .is("machine_id", null)
+      .order("created_at", { ascending: true });
+
+    if (findErr) {
+      return res.status(500).json({ success: false, message: findErr.message });
+    }
+
+    if (!waitingBookings || waitingBookings.length === 0) {
+      return res.json({
+        success: false,
+        message: `You are not currently in the ${type} queue.`
+      });
+    }
+
+    // Cancel every waiting entry of this type for the user. There should only
+    // ever be one, but clearing them all keeps the queue consistent if a
+    // duplicate slipped through.
+    const bookingIds = waitingBookings.map((b) => b.booking_id);
+    const { error: cancelErr } = await supabase
+      .from("Booking_Table")
+      .update({ booking_status: "cancelled" })
+      .in("booking_id", bookingIds);
+
+    if (cancelErr) {
+      return res.status(500).json({ success: false, message: cancelErr.message });
+    }
+
+    console.log(`[Queue Cancel] User ${user_id} left the ${type} queue`);
+
+    return res.json({
+      success: true,
+      message: `You have left the ${type} queue.`,
+      cancelled_count: bookingIds.length
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // Helper function to get machine type by machine ID, used in queue allocation to ensure users are allocated to the correct machine type (washer/dryer)
 async function getMachineType(machineId) {
   try {
