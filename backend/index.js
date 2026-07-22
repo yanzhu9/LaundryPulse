@@ -5,6 +5,7 @@ const { createClient } = require('@supabase/supabase-js');
 const cors = require('cors');
 const admin = require('firebase-admin');
 const { runWashFinishChecker } = require('./logic/washFinish');
+const { earliestFreeInMinutes, estimateWaitMinutes } = require('./logic/queueEstimate');
 
 let adminInitialized = false;
 try {
@@ -318,12 +319,7 @@ app.post("/api/queue-book", async (req, res) => {
     // middle option (45 min) as the estimate for queue wait-time calculations.
     const WASHER_CYCLE = 45;
     const DRYER_CYCLE = 45;
-    const PICKUP_GRACE = 15;
     const cycleBase = type === "washer" ? WASHER_CYCLE : DRYER_CYCLE;
-    // Estimated total time for one machine cycle including pickup grace, used for calculating queue wait time when no machines are currently available
-    const fullMachineDuration = type === "washer"
-      ? (15 + WASHER_CYCLE + PICKUP_GRACE)
-      : (15 + DRYER_CYCLE + PICKUP_GRACE);
 
     // 1. Credit score check: if user's credit_score < 15 → reject booking request, no queuing allowed
     const { data: userData, error: userErr } = await supabase
@@ -437,7 +433,6 @@ app.post("/api/queue-book", async (req, res) => {
 
     // 3. No available machine, calculate estimated wait time based on currently occupied machines of the same type, return it in response (not stored in DB)
     const now = new Date();
-    let machineBaseWaitMin = 0;
 
     // Only consider occupied machines of the same type, ignore those in grace-period or overdue (since they are technically still occupied but won't block the queue)
     const { data: occupiedMachines } = await supabase
@@ -446,45 +441,30 @@ app.post("/api/queue-book", async (req, res) => {
       .eq("machine_type", type)
       .eq("machine_status", "occupied");
 
-    if (occupiedMachines.length > 0) {
-      const waitList = [];
-      for (const machine of occupiedMachines) {
-        let machineFreeAt;
-        const { reserved_end_at, finished_at, pickup_end_at } = machine;
+    const machineBaseWaitMin = earliestFreeInMinutes(occupiedMachines, now, cycleBase);
 
-        // Condition 1: Just reserved but cycle hasn't started (reserved_end_at in the future, finished_at and pickup_end_at are null) → free time = reserved_end_at + cycle duration + pickup grace
-        if (finished_at === null && pickup_end_at === null) {
-          const reserveEnd = new Date(reserved_end_at);
-          machineFreeAt = new Date(reserveEnd.getTime() + (cycleBase + PICKUP_GRACE) * 60 * 1000);
-        }
-        // Condition 2: Cycle has started (finished_at in the future, pickup_end_at is null) → free time = finished_at + pickup grace
-        else if (finished_at && pickup_end_at === null) {
-          const finishTime = new Date(finished_at);
-          machineFreeAt = new Date(finishTime.getTime() + PICKUP_GRACE * 60 * 1000);
-        }
-        // Condition 3: Cycle finished but still in pickup grace (finished_at is null, pickup_end_at in the future) → free time = pickup_end_at
-        else if (pickup_end_at) {
-          machineFreeAt = new Date(pickup_end_at);
-        } else {
-          machineFreeAt = now;
-        }
-
-        const baseWait = Math.max(0, (machineFreeAt - now) / 1000 / 60);
-        waitList.push(baseWait);
-      }
-      machineBaseWaitMin = Math.round(Math.min(...waitList));
-    }
-
-    // Calculate how many people are currently waiting in the queue for this machine type (booking_status = "waiting", machine_id = null) → each person ahead adds one full cycle duration to the wait time
+    // Calculate how many people are currently waiting in the queue for this machine type (booking_status = "waiting", machine_id = null)
     const { count: queuePeopleCount } = await supabase
       .from("Booking_Table")
       .select("*", { count: "exact", head: true })
       .eq("machine_type", type)
       .eq("booking_status", "waiting")
       .is("machine_id", null);
-    // Total estimated wait time = base wait time from occupied machines + (number of people ahead in queue * full machine cycle duration)
-    const queueExtraWait = queuePeopleCount * fullMachineDuration;
-    const estimatedWaitMin = Math.round(machineBaseWaitMin + queueExtraWait);
+
+    // Machines that can actually serve the queue. Overdue and out-of-service
+    // machines are excluded, so the pool reflects real throughput.
+    const { count: serviceableCount } = await supabase
+      .from("Machine_Table")
+      .select("*", { count: "exact", head: true })
+      .eq("machine_type", type)
+      .in("machine_status", ["available", "occupied"]);
+
+    const estimatedWaitMin = estimateWaitMinutes({
+      earliestFreeMin: machineBaseWaitMin,
+      queueAhead: queuePeopleCount,
+      machineCount: serviceableCount,
+      cycleMin: cycleBase,
+    });
 
     // 4. Insert a new booking record with machine_id = null and booking_status = "waiting", which means the user is in the global waiting queue for that machine type (washer or dryer)
     await supabase.from("Booking_Table").insert([
@@ -529,35 +509,11 @@ app.get("/api/get-queue-overview", async (req, res) => {
     let peopleInQueue = waitingList.length;
 
     // 2. Query all occupied machines of this type (machine_status = "occupied") → calculate the earliest time any machine will be free, then calculate the base wait time in minutes
-    let machineBaseWaitMin = 0;
     const { data: occupiedMachines } = await supabase
       .from("Machine_Table")
       .select("machine_id, reserved_end_at, finished_at, pickup_end_at")
       .eq("machine_type", type)
       .eq("machine_status", "occupied");
-
-    if (occupiedMachines.length > 0) {
-      const waitList = [];
-      for (const machine of occupiedMachines) {
-        let machineFreeAt;
-        const { reserved_end_at, finished_at, pickup_end_at } = machine;
-
-        if (finished_at === null && pickup_end_at === null) {
-          const reserveEnd = new Date(reserved_end_at);
-          machineFreeAt = new Date(reserveEnd.getTime() + (cycleBase + PICKUP_GRACE) * 60 * 1000);
-        } else if (finished_at && pickup_end_at === null) {
-          const finishTime = new Date(finished_at);
-          machineFreeAt = new Date(finishTime.getTime() + PICKUP_GRACE * 60 * 1000);
-        } else if (pickup_end_at) {
-          machineFreeAt = new Date(pickup_end_at);
-        } else {
-          machineFreeAt = now;
-        }
-        const baseWait = Math.max(0, (machineFreeAt - now) / 1000 / 60);
-        waitList.push(baseWait);
-      }
-      machineBaseWaitMin = Math.round(Math.min(...waitList));
-    }
 
     // 3. Check if the user is already in the queue and how many people are ahead of them
     let isUserInQueue = false;
@@ -570,23 +526,32 @@ app.get("/api/get-queue-overview", async (req, res) => {
       }
     }
 
-    // 4. If there are any available machines of this type, reset the queue count and base wait time to 0 since the user can be allocated immediately
-    const { data: availableMachines } = await supabase
+    // 4. Machines that can serve this queue, and how many are free right now.
+    const { data: typeMachines } = await supabase
       .from("Machine_Table")
-      .select("*")
-      .eq("machine_type", type)
-      .eq("machine_status", "available");
+      .select("machine_status")
+      .eq("machine_type", type);
 
-    if (availableMachines.length > 0) {
-      return res.json({
-      peopleInQueue: 0,
-      earliestReadyMin: 0,
-      isUserInQueue: false,
-      peopleAhead: 0,
-      isInWasher: false,
-      isInDryer: false
-    });
-    }
+    const availableCount = (typeMachines || []).filter(
+      (m) => m.machine_status === "available"
+    ).length;
+    const serviceableCount = (typeMachines || []).filter(
+      (m) => m.machine_status === "available" || m.machine_status === "occupied"
+    ).length;
+
+    // A free machine means no waiting, but the user's own queue membership is
+    // still reported truthfully. Zeroing it out used to make the app think the
+    // user had left the queue, which re-enabled the join button and let them
+    // queue for the same machine type twice.
+    const earliestReadyMin =
+      availableCount > 0
+        ? 0
+        : estimateWaitMinutes({
+            earliestFreeMin: earliestFreeInMinutes(occupiedMachines, now, cycleBase),
+            queueAhead: peopleAhead,
+            machineCount: serviceableCount,
+            cycleMin: cycleBase,
+          });
 
     // 5. Query all waiting queue records for this user
     const { data: userWaitingRecords } = await supabase
@@ -598,18 +563,23 @@ app.get("/api/get-queue-overview", async (req, res) => {
 
     let isInWasher = false;
     let isInDryer = false;
-    userWaitingRecords.forEach(item => {
+    (userWaitingRecords || []).forEach(item => {
       if (item.machine_type === "washer") isInWasher = true;
       if (item.machine_type === "dryer") isInDryer = true;
     });
 
+    // No machine of this type can serve anyone (all overdue or out of service),
+    // so there is no meaningful ETA to show rather than a misleading 0.
+    const queueBlocked = serviceableCount === 0;
+
     res.json({
       peopleInQueue: peopleInQueue,
-      earliestReadyMin: machineBaseWaitMin,
+      earliestReadyMin: earliestReadyMin,
       isUserInQueue: isUserInQueue,
       peopleAhead: peopleAhead,
       isInWasher: isInWasher,
-      isInDryer: isInDryer
+      isInDryer: isInDryer,
+      queueBlocked: queueBlocked
     });
 
   } catch (err) {
