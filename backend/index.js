@@ -749,9 +749,27 @@ app.get('/getMachineInfo', async (req, res) => {
       .eq('machine_id', mid)
       .eq('booking_status', 'waiting');
 
+    // 查询 Usage_Log_Table 获取最近一次使用记录的总时长
+    let totalSec = 0;
+    if (machData?.finished_at) {
+      const { data: usageLog } = await supabase
+        .from('Usage_Log_Table')
+        .select('mode_min')
+        .eq('machine_id', mid)
+        .order('used_at', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (usageLog?.mode_min) {
+        totalSec = usageLog.mode_min * 60;
+      }
+    }
+
     let remainSec = 0;
     let reservedRemainSec = 0;
+    const reservedTotalSec = 900; // 预约15分钟固定
     let pickupRemainSec = 0;
+    const pickupTotalSec = 900;   // 取件15分钟固定
     const nowMs = Date.now();
 
     if (machData?.finished_at) {
@@ -769,15 +787,24 @@ app.get('/getMachineInfo', async (req, res) => {
 
     res.json({
       remain_seconds: remainSec,
+      total_seconds: totalSec,
       reserved_remain_seconds: reservedRemainSec,
+      reserved_total_seconds: reservedTotalSec,
       pickup_remain_seconds: pickupRemainSec,
+      pickup_total_seconds: pickupTotalSec,
       ahead_count: waitCnt ?? 0,
       machine_status: machData?.machine_status ?? 'occupied',
       current_user_id: machData?.current_user_id ?? ''
     });
 
   } catch (err) {
-    res.json({ remain_seconds: 0, reserved_remain_seconds: 0, pickup_remain_seconds: 0, ahead_count: 0, machine_status: 'occupied', current_user_id: '' });
+    console.error("getMachineInfo error:", err);
+    res.json({ 
+      remain_seconds: 0, total_seconds: 0, 
+      reserved_remain_seconds: 0, reserved_total_seconds: 900, 
+      pickup_remain_seconds: 0, pickup_total_seconds: 900, 
+      ahead_count: 0, machine_status: 'occupied', current_user_id: '' 
+    });
   }
 });
 
