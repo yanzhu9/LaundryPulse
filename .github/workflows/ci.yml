@@ -1,0 +1,113 @@
+name: CI
+
+# Runs on every push to main and on every pull request, so a change that breaks
+# an existing feature is caught before it is merged rather than after it ships.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-unit-tests:
+    name: Backend unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Offline tests only. They exercise the pure logic in backend/logic and
+      # need no database or network, so a failure here is always a real
+      # regression.
+      - name: Run unit tests
+        run: npm run test:unit
+
+  backend-api-tests:
+    name: Backend API tests
+    runs-on: ubuntu-latest
+    # These call the deployed Render backend, which sleeps when idle, so the
+    # job wakes it first and the tests allow 30s each. They only assert on
+    # contract-level behaviour (status codes, response shape, validation), not
+    # on specific rows, so they do not depend on what the live data happens to
+    # look like.
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Wake the deployed backend
+        run: curl -s -m 120 --retry 3 --retry-delay 15 https://laundrypulse-gf1v.onrender.com/ || true
+
+      - name: Run API tests
+        run: npm run test:api
+
+  frontend-analyze:
+    name: Frontend analyze
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.0'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Infos are not fatal: the project carries a number of pre-existing ones
+      # that are unrelated to any given change. Errors and warnings still fail
+      # the job.
+      - name: Analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: Check formatting of Dart sources
+        run: dart format --output=none --set-exit-if-changed lib || echo "::warning::Dart sources are not formatted. Run 'dart format lib'."
+
+  frontend-build:
+    name: Frontend build (web)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.0'
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Catches the class of breakage that analyze alone misses, such as an
+      # import of a file that does not exist.
+      - name: Build web
+        run: flutter build web --release

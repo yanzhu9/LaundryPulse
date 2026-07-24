@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node index.js",
     "test": "jest",
-    "test:unit": "jest tests/unit"
+    "test:unit": "jest tests/unit",
+    "test:api": "jest tests --testPathIgnorePatterns tests/unit --testTimeout 30000"
   },
   "keywords": [],
   "author": "",

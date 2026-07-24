@@ -1,3 +1,18 @@
 node_modules
-.env.idea/
+.env
+.idea/
 frontend/.idea/
+backend/serviceAccountKey.json
+
+# Build output and generated files. These are produced by `flutter build`,
+# `flutter run` and `flutter pub get`, so they change constantly and should
+# never be committed.
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+
+# Editor
+.vscode/
+.DS_Store
