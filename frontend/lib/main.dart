@@ -12,6 +12,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/foundation.dart';
 import 'pages/admin.dart';
+import 'dart:math';
 
 enum MachineStatus {
   available,
@@ -24,10 +25,12 @@ enum MachineStatus {
 class LaundryMachine {
   final String id;
   final MachineStatus status;
+   final bool isMyMachine;
 
   LaundryMachine({
     required this.id,
     required this.status,
+    this.isMyMachine = false,
   });
 }
 
@@ -206,19 +209,15 @@ class FaultReportPage extends StatefulWidget {
 }
 
 class _FaultReportPageState extends State<FaultReportPage> {
-  // 用变量替代 TextEditingController 来保存选择的值
   String? selectedFacilityType; // washer / dryer / locker
   String? selectedFacilityNumber;
 
-  // 只有 faultDesc 还需要 TextEditingController（多行文本输入）
   final TextEditingController faultDescCtrl = TextEditingController();
 
-  // 三种设备的编号列表
   final List<String> washerNumbers = ['W-01', 'W-02', 'W-03', 'W-04', 'W-05', 'W-06'];
   final List<String> dryerNumbers  = ['D-01', 'D-02', 'D-03', 'D-04', 'D-05', 'D-06'];
   final List<String> lockerNumbers = ['1', '2', '3', '4', '5', '6'];
 
-  // 根据选择的 facility type 返回对应的编号列表
   List<String> get currentNumberList {
     switch (selectedFacilityType) {
       case 'washer':
@@ -238,15 +237,13 @@ class _FaultReportPageState extends State<FaultReportPage> {
     super.dispose();
   }
 
-  // 当 facility type 改变时，重置 facility number 的选择
   void onFacilityTypeChanged(String? newType) {
     setState(() {
       selectedFacilityType = newType;
-      selectedFacilityNumber = null; // 切换类型时清空编号选择
+      selectedFacilityNumber = null; 
     });
   }
 
-  // 确认弹窗
   void openConfirmDialog() {
     showDialog(
       context: context,
@@ -283,7 +280,6 @@ class _FaultReportPageState extends State<FaultReportPage> {
     final String facilityNumber = selectedFacilityNumber ?? '';
     final String faultDesc = faultDescCtrl.text.trim();
 
-    // 1. 检查是否都已选择/填写
     if (facilityType.isEmpty || facilityNumber.isEmpty || faultDesc.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -295,7 +291,6 @@ class _FaultReportPageState extends State<FaultReportPage> {
       return;
     }
 
-    // 2. 检查 facility type 有效性（下拉选择基本不会出错，但保留校验）
     final List<String> allowTypeList = ["washer", "dryer", "locker"];
     if (!allowTypeList.contains(facilityType)) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -308,10 +303,6 @@ class _FaultReportPageState extends State<FaultReportPage> {
       return;
     }
 
-    // 3. 因为现在是下拉选择，编号格式必然正确，可以跳过正则校验
-    // （如果你仍想保留正则校验兜底，也可以留着）
-
-    // 4. 检查是否登录
     final String? submitUserId = current_user_id;
     if (submitUserId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -324,7 +315,6 @@ class _FaultReportPageState extends State<FaultReportPage> {
       return;
     }
 
-    // 5. 发送 API 请求
     final String apiUrl = "https://laundrypulse.onrender.com/api/create-fault-report";
 
     try {
@@ -391,7 +381,6 @@ class _FaultReportPageState extends State<FaultReportPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ========== 1. Facility Type 下拉选择 ==========
             const Text(
               "Facility Type",
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
@@ -413,7 +402,6 @@ class _FaultReportPageState extends State<FaultReportPage> {
             ),
             const SizedBox(height: 22),
 
-            // ========== 2. Facility Number 下拉选择（联动） ==========
             const Text(
               "Facility Number",
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
@@ -440,7 +428,6 @@ class _FaultReportPageState extends State<FaultReportPage> {
             ),
             const SizedBox(height: 22),
 
-            // ========== 3. Fault Description 多行输入 ==========
             const Text(
               "Fault Description (Please describe in detail)",
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
@@ -458,7 +445,6 @@ class _FaultReportPageState extends State<FaultReportPage> {
             ),
             const SizedBox(height: 40),
 
-            // ========== 4. 提交按钮 ==========
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -487,80 +473,78 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   List<LaundryMachine> machines = [];
   Timer? timer;
-  Map<String, dynamic>? offPeak; // off-peak recommendation payload (null = loading)
+  Map<String, dynamic>? offPeak;
 
-@override
-void initState() {
-  super.initState();
-  () async {
-    await fetchRealMachineData();
-  }();
+  @override
+  void initState() {
+    super.initState();
+    () async {
+      await fetchRealMachineData();
+    }();
 
-  // Off-peak data only changes weekly, so fetch it once (not on the 5s timer).
-  fetchOffPeak();
+    fetchOffPeak();
 
-  timer = Timer.periodic(const Duration(seconds: 5), (timer) async {
-    await fetchRealMachineData();
-  });
-}
-
-// Fetch the weekly off-peak recommendation for the current user.
-Future<void> fetchOffPeak() async {
-  if (current_user_id == null || current_user_id!.isEmpty) return;
-  try {
-    final res = await http.get(Uri.parse(
-      "https://laundrypulse-gf1v.onrender.com/api/off-peak-recommendation?user_id=$current_user_id"));
-    if (res.statusCode == 200 && mounted) {
-      setState(() {
-        offPeak = jsonDecode(res.body) as Map<String, dynamic>;
-      });
-    }
-  } catch (_) {
-    // Silent: the card just stays in its loading/empty state on failure.
-  }
-}
-
-//close the timer if leaving the page
-@override
-void dispose() {
-  timer?.cancel(); 
-  super.dispose();
-}
-
-  Future<void> fetchRealMachineData() async {
-  final res = await http.get(Uri.parse("https://laundrypulse-gf1v.onrender.com/machines"));
-  List<dynamic> rawList = jsonDecode(res.body);
-  rawList.sort((a, b) => a["machine_id"].compareTo(b["machine_id"]));
-
-  if (mounted) {
-    setState(() {
-      machines = rawList.map((item) {
-        String statusStr = item["machine_status"];
-        MachineStatus st;
-        switch (statusStr) {
-          case "available":
-            st = MachineStatus.available;
-            break;
-          case "occupied":
-            st = MachineStatus.occupied;
-            break;
-          //case "grace-period":
-           // st = MachineStatus.gracePeriod;
-            //break;
-          case "overdue":
-            st = MachineStatus.overdue;
-            break;
-          case "outOfService":
-            st = MachineStatus.outOfService;
-            break;
-          default:
-            st = MachineStatus.available;
-        }
-        return LaundryMachine(id: item["machine_id"], status: st);
-      }).toList();
+    timer = Timer.periodic(const Duration(seconds: 5), (timer) async {
+      await fetchRealMachineData();
     });
   }
-}
+
+  Future<void> fetchOffPeak() async {
+    if (current_user_id == null || current_user_id!.isEmpty) return;
+    try {
+      final res = await http.get(Uri.parse(
+        "https://laundrypulse-gf1v.onrender.com/api/off-peak-recommendation?user_id=$current_user_id"));
+      if (res.statusCode == 200 && mounted) {
+        setState(() {
+          offPeak = jsonDecode(res.body) as Map<String, dynamic>;
+        });
+      }
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> fetchRealMachineData() async {
+    final res = await http.get(Uri.parse("https://laundrypulse-gf1v.onrender.com/machines"));
+    List<dynamic> rawList = jsonDecode(res.body);
+    rawList.sort((a, b) => a["machine_id"].compareTo(b["machine_id"]));
+
+    if (mounted) {
+      setState(() {
+        machines = rawList.map((item) {
+          String statusStr = item["machine_status"];
+          MachineStatus st;
+          switch (statusStr) {
+            case "available":
+              st = MachineStatus.available;
+              break;
+            case "occupied":
+              st = MachineStatus.occupied;
+              break;
+            case "overdue":
+              st = MachineStatus.overdue;
+              break;
+            case "outOfService":
+              st = MachineStatus.outOfService;
+              break;
+            default:
+              st = MachineStatus.available;
+          }
+          final bool isMyMachine = item["current_user_id"] != null &&
+              item["current_user_id"].toString() == current_user_id;
+          return LaundryMachine(
+            id: item["machine_id"],
+            status: st,
+            isMyMachine: isMyMachine,
+          );
+        }).toList();
+      });
+    }
+  }
 
   Color _getStatusColor(MachineStatus status) {
     switch (status) {
@@ -568,8 +552,6 @@ void dispose() {
         return Colors.green.shade100;
       case MachineStatus.occupied:
         return Colors.blue.shade100;
-      //case MachineStatus.gracePeriod:
-        //return Colors.orange.shade100;
       case MachineStatus.overdue:
         return Colors.red.shade100;
       case MachineStatus.outOfService:
@@ -577,8 +559,8 @@ void dispose() {
     }
   }
 
-   void _onMachineTap(LaundryMachine machine) async{
-    if (machine.status == MachineStatus.occupied ) {
+  void _onMachineTap(LaundryMachine machine) async {
+    if (machine.status == MachineStatus.occupied) {
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -586,7 +568,8 @@ void dispose() {
         ),
       );
     } else if (machine.status == MachineStatus.overdue) {
-      final response = await http.get(Uri.parse('https://laundrypulse-gf1v.onrender.com/api/check-active-assistance?machine_id=${machine.id}'));
+      final response = await http.get(Uri.parse(
+          'https://laundrypulse-gf1v.onrender.com/api/check-active-assistance?machine_id=${machine.id}'));
       final data = json.decode(response.body);
       if (data['has_active_assist']) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -594,7 +577,6 @@ void dispose() {
         );
         return;
       }
-      // if not being assisted, navigate to the overdue handling page to prompt user action
       Navigator.push(
         context,
         MaterialPageRoute(
@@ -615,8 +597,10 @@ void dispose() {
           color: _getStatusColor(machine.status),
           borderRadius: BorderRadius.circular(12),
           border: machine.status == MachineStatus.overdue
-              ? Border.all(color: Colors.red, width: 2) //overdue state has a red border
-              : null,
+              ? Border.all(color: Colors.red, width: 2)
+              : machine.isMyMachine
+                  ? Border.all(color: Colors.blue, width: 2.5)
+                  : null,
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -628,22 +612,37 @@ void dispose() {
                 fontWeight: FontWeight.bold,
               ),
             ),
+            if (machine.isMyMachine) ...[
+              const SizedBox(height: 4),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: Colors.blue,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Text(
+                  "Using",
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
   }
 
-  // Weekly off-peak recommendation card shown at the top of the home page.
   Widget _buildOffPeakCard() {
-    // Still loading: render nothing to avoid layout flashing.
     if (offPeak == null) return const SizedBox.shrink();
 
     final List recs = (offPeak!["recommendations"] as List?) ?? [];
     final Map? next = offPeak!["nextOffPeak"] as Map?;
     final bool personalized = offPeak!["personalized"] == true;
 
-    // No booking data yet -> gentle placeholder instead of an empty card.
     if (recs.isEmpty || next == null) {
       return Container(
         width: double.infinity,
@@ -711,8 +710,6 @@ void dispose() {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    // HeatMapPage has no AppBar of its own (it normally lives
-                    // inside the tab scaffold), so wrap it to get a back button.
                     builder: (context) => Scaffold(
                       appBar: AppBar(
                         backgroundColor: const Color.fromARGB(255, 215, 230, 243),
@@ -739,68 +736,59 @@ void dispose() {
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
-        children: [
-          _buildOffPeakCard(),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              Row(
-                children: [
-                  Container(width:8, height:8, color: Colors.green.shade100),
-                  SizedBox(width: 4,),
-                  Text("Available"),
-                ],
-              ),
-              Row(
-                children: [
-                  Container(width:8, height:8, color:  Colors.blue.shade100),
-                  SizedBox(width: 4,),
-                  Text("Occupied"),
-                ],
-              ),
-              //Row(
-                //children: [
-                  //Container(width:8, height:8, color: Colors.orange.shade100),
-                  //SizedBox(width: 4,),
-                  //Text("Grace Period"),
-                //],
-              //),
-              Row(
-                children: [
-                  Container(width:8, height:8, color: Colors.red.shade100),
-                  SizedBox(width: 4,),
-                  Text("Overdue"),
-                ],
-              ),
-              Row(
-                children: [
-                  Container(width:8, height:8, color: Colors.grey.shade100),
-                  SizedBox(width: 4,),
-                  Text("Out of Service"),
-                ],
-              ),
-            ],
-          ),
-          
-          const SizedBox(height: 24),
-
-          GridView.builder(
-                shrinkWrap: true, 
-                physics: const NeverScrollableScrollPhysics(), 
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3, 
-                  crossAxisSpacing: 16,
-                  mainAxisSpacing: 16,
-                  childAspectRatio: 1.1, 
+          children: [
+            _buildOffPeakCard(),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                Row(
+                  children: [
+                    Container(width: 8, height: 8, color: Colors.green.shade100),
+                    const SizedBox(width: 4),
+                    const Text("Available"),
+                  ],
                 ),
-                itemCount: machines.length,
-                itemBuilder: (context, index) {
-                  final machine = machines[index];
-                  return _buildMachineCard(machine);
-                },
+                Row(
+                  children: [
+                    Container(width: 8, height: 8, color: Colors.blue.shade100),
+                    const SizedBox(width: 4),
+                    const Text("Occupied"),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Container(width: 8, height: 8, color: Colors.red.shade100),
+                    const SizedBox(width: 4),
+                    const Text("Overdue"),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Container(width: 8, height: 8, color: Colors.grey.shade100),
+                    const SizedBox(width: 4),
+                    const Text("Out of Service"),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3,
+                crossAxisSpacing: 16,
+                mainAxisSpacing: 16,
+                childAspectRatio: 1.1,
               ),
-        ],
-      ),
+              itemCount: machines.length,
+              itemBuilder: (context, index) {
+                final machine = machines[index];
+                return _buildMachineCard(machine);
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2060,8 +2048,12 @@ class RealTimeWaitTimePage extends StatefulWidget {
 
 class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
   int remainTotalSec = 0;
+  int totalSec = 0;          
   int reservedSec = 0;
+  int reservedTotalSec = 0;  
   int pickupSec = 0;
+  int pickupTotalSec = 0;    
+
   bool washingStarted = false;
   bool isPickupWindow = false;
   bool isLoading = false;
@@ -2069,7 +2061,7 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
 
   // backend polling timer
   Timer? _refreshTimer;
-  // frontend local countdown timer (only active during washing)
+  // frontend local countdown timer
   Timer? _localCountdownTimer;
 
   final String baseUrl = "https://laundrypulse-gf1v.onrender.com";
@@ -2077,9 +2069,7 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
   @override
   void initState() {
     super.initState();
-    // when page loads, immediately fetch machine info to initialize all states and decide UI rendering logic
     fetchMachineInfo();
-    // set up a timer to poll backend every 5 seconds for the latest machine info, ensuring data freshness and state accuracy (especially for overdue detection)
     _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (mounted) fetchMachineInfo();
     });
@@ -2087,38 +2077,40 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
 
   @override
   void dispose() {
-    // when leaving the page, cancel all timers to prevent memory leaks and unintended state updates
     _refreshTimer?.cancel();
     _stopLocalCountdown();
     super.dispose();
   }
 
-  // get machine info from backend, update all relevant states, and handle key logic for local countdown and overdue detection
   Future<void> fetchMachineInfo() async {
     try {
-      final res = await http.get(Uri.parse("$baseUrl/getMachineInfo?mid=${widget.machineId}"));
+      final res = await http.get(
+          Uri.parse("$baseUrl/getMachineInfo?mid=${widget.machineId}"));
       final map = jsonDecode(res.body);
       setState(() {
         remainTotalSec = map["remain_seconds"] ?? 0;
+        totalSec = map["total_seconds"] ?? 0;
         reservedSec = map["reserved_remain_seconds"] ?? 0;
+        reservedTotalSec = map["reserved_total_seconds"] ?? 0;
         pickupSec = map["pickup_remain_seconds"] ?? 0;
+        pickupTotalSec = map["pickup_total_seconds"] ?? 0;
         machineStatus = map["machine_status"] ?? "occupied";
         washingStarted = remainTotalSec > 0;
         isPickupWindow = pickupSec > 0;
       });
 
-      // if washing has started, kick off the local countdown timer to achieve smooth second-by-second decrement in the UI without waiting for backend polling; if washing hasn't started, ensure any existing local countdown is stopped to prevent stale timers
-      if (washingStarted) {
+      if (washingStarted || isPickupWindow || reservedSec > 0) {
         _startLocalCountdown();
       } else {
         _stopLocalCountdown();
       }
 
-      // if machine is detected as overdue, immediately navigate to the overdue handling page to prompt user action, ensuring this critical state is addressed without delay
       if (machineStatus == "overdue" && mounted) {
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (context) => OverdueHandlingPage(machineId: widget.machineId)),
+          MaterialPageRoute(
+              builder: (context) =>
+                  OverdueHandlingPage(machineId: widget.machineId)),
         );
       }
     } catch (e) {
@@ -2127,19 +2119,18 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
   }
 
   void _startLocalCountdown() {
-    // ensure any existing local countdown timer is stopped before starting a new one, preventing multiple timers from running simultaneously which could cause state inconsistencies and memory leaks
     _stopLocalCountdown();
-    // start a new timer that ticks every second, decrementing the remaining seconds and updating the UI accordingly; if the timer detects that the remaining seconds have reached zero, it stops itself and triggers a fresh fetch from the backend to confirm the machine's status and update the UI (especially important for transitioning to the pick-up window or detecting overdue state)
     _localCountdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (!mounted) {
         _stopLocalCountdown();
         return;
       }
       setState(() {
-        if (remainTotalSec > 0) {
-          remainTotalSec--;
-        } else {
-          // when local countdown reaches zero, stop the timer and fetch latest machine info from backend to confirm status (e.g., transition to pick-up window or detect overdue)
+        if (remainTotalSec > 0) remainTotalSec--;
+        if (reservedSec > 0) reservedSec--;
+        if (pickupSec > 0) pickupSec--;
+
+        if (remainTotalSec <= 0 && reservedSec <= 0 && pickupSec <= 0) {
           _stopLocalCountdown();
           fetchMachineInfo();
         }
@@ -2147,15 +2138,11 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
     });
   }
 
-  // a helper function to stop and nullify the local countdown timer, ensuring that we don't have multiple timers running simultaneously which could lead to memory leaks and inconsistent state updates; this function is called both when washing starts (to reset any existing timer) and when washing ends (to clean up the timer)
   void _stopLocalCountdown() {
     _localCountdownTimer?.cancel();
     _localCountdownTimer = null;
   }
 
-  // clicking the "Start Washing" button will trigger this function, which sends a request to the backend to start the washing process; upon successful response, it fetches the latest machine info to update the UI (e.g., show the countdown timer); if there's an error during the request, it shows a snackbar with an error message; throughout the process, it manages a loading state to disable the button and show a loading indicator while the request is in progress
-  // Triggered by the "Start" button. First ask the user to pick a cycle duration
-  // (30/45/60 min). For washers, then ask whether to auto-reserve a dryer.
   Future<void> _onStartPressed() async {
     final bool isWasher = widget.machineId.startsWith('W');
     final String verb = isWasher ? "wash" : "dry";
@@ -2163,7 +2150,6 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
 
     int? mode;
 
-    // Step 0: if the user has a preferred mode, offer to reuse it
     try {
       final prefRes = await http.get(
         Uri.parse("$baseUrl/api/user-preference?user_id=$current_user_id&type=$type"),
@@ -2188,14 +2174,11 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
             ],
           ),
         );
-        if (usePref == null) return;        // dismissed → cancel start
+        if (usePref == null) return;
         if (usePref == true) mode = preferredMode;
       }
-    } catch (_) {
-      // preference lookup failed → fall through to manual selection
-    }
+    } catch (_) {}
 
-    // Step 1: choose cycle duration (only if not already set by preference)
     if (mode == null) {
       mode = await showDialog<int>(
         context: context,
@@ -2212,16 +2195,14 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
           ),
         ),
       );
-      if (mode == null) return; // dismissed → don't start
+      if (mode == null) return;
     }
 
-    // Dryers start directly after picking duration
     if (!isWasher) {
       await startWashing(mode: mode);
       return;
     }
 
-    // Step 2 (washer only): ask about dryer auto-reservation
     final bool? wantDryer = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -2259,7 +2240,10 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
         await fetchMachineInfo();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("${widget.machineId.startsWith('W') ? 'Washing' : 'Drying'} started! Timer is running."), backgroundColor: Colors.green),
+            SnackBar(
+              content: Text("${widget.machineId.startsWith('W') ? 'Washing' : 'Drying'} started! Timer is running."),
+              backgroundColor: Colors.green,
+            ),
           );
         }
       }
@@ -2274,7 +2258,6 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
     }
   }
 
-  // clicking the "Collect Clothes" button will trigger this function, which sends a request to the backend to collect the laundry; upon successful response, it shows a snackbar and navigates back to the previous page; if there's an error during the request, it shows a snackbar with an error message; throughout the process, it manages a loading state to disable the button and show a loading indicator while the request is in progress
   Future<void> pickUpLaundry() async {
     setState(() => isLoading = true);
     try {
@@ -2306,127 +2289,172 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
     return "${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}";
   }
 
+  Widget _buildCircularTimer({
+    required int currentSec,
+    required int totalSec,
+    required String label,
+    required Color color,
+    required IconData icon,
+    String? subtitle,
+    Widget? actionButton,
+  }) {
+    double progress = totalSec > 0 ? currentSec / totalSec : 0.0;
+    progress = progress.clamp(0.0, 1.0);
+
+    return Column(
+      children: [
+        SizedBox(
+          width: 270,
+          height: 270,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              CustomPaint(
+                size: const Size(270, 270),
+                painter: CircularProgressPainter(
+                  progress: 1.0,
+                  color: Colors.grey.shade200,
+                  strokeWidth: 7,
+                ),
+              ),
+              CustomPaint(
+                size: const Size(270, 270),
+                painter: CircularProgressPainter(
+                  progress: progress,
+                  color: color,
+                  strokeWidth: 7,
+                ),
+              ),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 50, color: color),
+                  const SizedBox(height: 12),
+                  Text(
+                    formatMMSS(currentSec),
+                    style: const TextStyle(
+                      fontSize: 42,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black,
+                    ),
+                  ),
+                  if (subtitle != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(fontSize: 13, color: Colors.grey),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+        if (actionButton != null) ...[
+          const SizedBox(height: 28),
+          actionButton,
+        ],
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool isWasher = widget.machineId.startsWith('W');
     final String actionVerb = isWasher ? "Wash" : "Dry";
     final String actionGerund = isWasher ? "Washing" : "Drying";
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color.fromARGB(255, 147, 187, 243),
         centerTitle: true,
         title: Text('Machine ${widget.machineId}'),
         leading: IconButton(
-        icon: const Icon(Icons.arrow_back),
-        onPressed: () {
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(builder: (context) => const MyHomePage()),
-            (route) => false,
-          );
-        },
-      ),  
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (context) => const MyHomePage()),
+              (route) => false,
+            );
+          },
+        ),
       ),
       body: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 32),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const SizedBox(height: 60),
-
-            // 1. pick-up window stage: show a prominent message with a call-to-action button to collect clothes, and disable the button while the pick-up request is in progress to prevent duplicate requests; this stage only appears when the backend indicates that the machine is in the pick-up window (i.e., washing has ended but clothes haven't been collected yet)
             if (isPickupWindow)
-              Column(
-                children: [
-                  const Icon(Icons.check_circle_outline, size: 80, color: Colors.orange),
-                  const SizedBox(height: 16),
-                  const Text(
-                    "Washing Done!",
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    "Please collect your clothes within 15 minutes.",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 15, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 32),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: isLoading ? null : pickUpLaundry,
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 18),
-                        backgroundColor: Colors.green,
-                      ),
-                      child: isLoading
-                          ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
-                          : const Text("Pick Up ✓", style: TextStyle(fontSize: 18, color: Colors.white)),
+              _buildCircularTimer(
+                currentSec: pickupSec,
+                totalSec: pickupTotalSec,
+                label: "Pick-up Window",
+                color: Colors.blue,
+                icon: Icons.check_circle_outline,
+                subtitle: "Please collect your clothes",
+                actionButton: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: isLoading ? null : pickUpLaundry,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      backgroundColor: Colors.green,
                     ),
+                    child: isLoading
+                        ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                        : const Text("Pick Up ✓", style: TextStyle(fontSize: 18, color: Colors.white)),
                   ),
-                ],
+                ),
               )
 
-            // 2. washing in progress stage: show a large circular timer with the remaining time, and display the number of people ahead in the queue; this stage is only shown when the backend indicates that washing has started (i.e., remainTotalSec > 0), and it relies on both backend polling and local countdown to keep the timer accurate and responsive
             else if (washingStarted)
-              Column(
-                children: [
-                  Transform.translate(
-                    offset: const Offset(0, -60),
-                    child: Align(
-                      alignment: const Alignment(0, 0),
-                      child: Container(
-                        width: 270,
-                        height: 270,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: Colors.blue, width: 7),
-                      ),
-                      child: Center(
-                        child: Text(
-                          formatMMSS(remainTotalSec),
-                          style: const TextStyle(fontSize: 52, fontWeight: FontWeight.bold, color: Colors.black),
-                        ),
-                      ),
-                    ),
-                  )
-                  ),
-                ],
+              _buildCircularTimer(
+                currentSec: remainTotalSec,
+                totalSec: totalSec,
+                label: "$actionGerund in Progress",
+                color: Colors.blue,
+                icon: Icons.local_laundry_service,
+                subtitle: "Time remaining",
               )
 
-            // 3. reserved but not started stage: show a prompt to start washing, and disable the button while the start request is in progress to prevent duplicate requests; this stage appears when the backend indicates that the user has reserved the machine (i.e., reservedSec > 0) but washing hasn't started yet (i.e., remainTotalSec == 0), guiding the user to take action and ensuring a smooth transition to the washing stage once they hit start
             else if (reservedSec > 0)
-              Column(
-                children: [
-                  const Icon(Icons.local_laundry_service, size: 100, color: Colors.blue),
-                  const SizedBox(height: 24),
-                  Text(
-                    "Ready to ${actionVerb.toLowerCase()}?",
-                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    "Press Start $actionGerund when you load your clothes.",
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 15, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 32),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: isLoading ? null : _onStartPressed,
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 18),
-                        backgroundColor: Colors.blue,
-                      ),
-                      child: isLoading
-                          ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
-                          : Text("Start $actionGerund", style: const TextStyle(fontSize: 18, color: Colors.white)),
+              _buildCircularTimer(
+                currentSec: reservedSec,
+                totalSec: reservedTotalSec,
+                label: "Ready to ${actionVerb.toLowerCase()}?",
+                color: Colors.blue,
+                icon: Icons.local_laundry_service,
+                subtitle: "Reservation expires in",
+                actionButton: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: isLoading ? null : _onStartPressed,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      backgroundColor: Colors.blue,
                     ),
+                    child: isLoading
+                        ? const CircularProgressIndicator(color: Colors.white, strokeWidth: 2)
+                        : Text("Start $actionGerund", style: const TextStyle(fontSize: 18, color: Colors.white)),
                   ),
-                ],
+                ),
+              )
+
+            else ...[
+              const Icon(Icons.local_laundry_service, size: 100, color: Colors.grey),
+              const SizedBox(height: 24),
+              const Text(
+                "Machine Available",
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
               ),
+              const SizedBox(height: 8),
+              const Text(
+                "This machine is currently free to use.",
+                style: TextStyle(fontSize: 15, color: Colors.grey),
+              ),
+            ],
+
             const SizedBox(height: 40),
             Container(
               width: double.infinity,
@@ -2443,6 +2471,46 @@ class _RealTimeWaitTimePageState extends State<RealTimeWaitTimePage> {
         ),
       ),
     );
+  }
+}
+
+class CircularProgressPainter extends CustomPainter {
+  final double progress; // 0.0 ~ 1.0
+  final Color color;
+  final double strokeWidth;
+
+  CircularProgressPainter({
+    required this.progress,
+    required this.color,
+    required this.strokeWidth,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = (size.width / 2) - (strokeWidth / 2);
+
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+
+    final startAngle = -pi / 2;
+    final sweepAngle = 2 * pi * progress;
+
+    canvas.drawArc(
+      Rect.fromCircle(center: center, radius: radius),
+      startAngle,
+      sweepAngle,
+      false,
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CircularProgressPainter oldDelegate) {
+    return oldDelegate.progress != progress || oldDelegate.color != color;
   }
 }
 

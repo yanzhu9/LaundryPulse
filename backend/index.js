@@ -1045,8 +1045,7 @@ setInterval(async () => {
 
     console.log(`User ${targetUserId} credit deducted: ${userData.credit_score} -> ${newScore}`);
   }
- }
-
+}
 
     if (targetUserId) {
       const notifyTitle = 'Reservation Expired ⏰';
