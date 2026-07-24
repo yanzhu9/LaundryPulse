@@ -999,7 +999,7 @@ setInterval(async () => {
         current_user_id: null
       })
       .eq('machine_id', machine.machine_id);
-
+    
     await supabase
       .from('Booking_Table')
       .update({ booking_status: 'expired' })
@@ -1007,6 +1007,46 @@ setInterval(async () => {
       .eq('booking_status', 'using');
 
     console.log(`Machine ${machine.machine_id} reservation expired → available`);
+
+    if (targetUserId) {
+  await supabase.from('User_Violation_Record').insert([{
+    user_id: targetUserId,
+    violation_type: 'no_show',
+    status: 'active'
+  }]);
+
+  const { count } = await supabase
+    .from('User_Violation_Record')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', targetUserId)
+    .eq('violation_type', 'no_show')
+    .eq('status', 'active');
+
+  if (count >= 3) {
+    const { data: userData } = await supabase
+      .from('User_Table')
+      .select('credit_score')
+      .eq('user_id', targetUserId)
+      .single();
+
+    const newScore = Math.max(0, userData.credit_score - 5);
+
+    await supabase
+      .from('User_Table')
+      .update({ credit_score: newScore })
+      .eq('user_id', targetUserId);
+
+    await supabase
+      .from('User_Violation_Record')
+      .update({ status: 'processed' })
+      .eq('user_id', targetUserId)
+      .eq('violation_type', 'no_show')
+      .eq('status', 'active');
+
+    console.log(`User ${targetUserId} credit deducted: ${userData.credit_score} -> ${newScore}`);
+  }
+ }
+
 
     if (targetUserId) {
       const notifyTitle = 'Reservation Expired ⏰';
@@ -1048,6 +1088,43 @@ setInterval(async () => {
         pickup_end_at: null
       })
       .eq("machine_id", m.machine_id);
+
+await supabase.from('User_Violation_Record').insert([{
+  user_id: m.current_user_id,
+  violation_type: 'overdue_pickup',
+  status: 'active'
+}]);
+
+const { count } = await supabase
+  .from('User_Violation_Record')
+  .select('*', { count: 'exact', head: true })
+  .eq('user_id', m.current_user_id)
+  .eq('violation_type', 'overdue_pickup')
+  .eq('status', 'active');
+
+if (count >= 3) {
+  const { data: userData } = await supabase
+    .from('User_Table')
+    .select('credit_score')
+    .eq('user_id', m.current_user_id)
+    .single();
+
+  const newScore = Math.max(0, userData.credit_score - 5);
+
+  await supabase
+    .from('User_Table')
+    .update({ credit_score: newScore })
+    .eq('user_id', m.current_user_id);
+
+  await supabase
+    .from('User_Violation_Record')
+    .update({ status: 'processed' })
+    .eq('user_id', m.current_user_id)
+    .eq('violation_type', 'overdue_pickup')
+    .eq('status', 'active');
+
+  console.log(`User ${m.current_user_id} credit deducted: ${userData.credit_score} -> ${newScore}`);
+}
 
     // 取件窗口超时，机器进入 overdue，提醒用户立即取件
     await sendNotification(
