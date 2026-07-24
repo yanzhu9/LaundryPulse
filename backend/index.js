@@ -714,9 +714,27 @@ app.get('/getMachineInfo', async (req, res) => {
       .eq('machine_id', mid)
       .eq('booking_status', 'waiting');
 
+    // 查询 Usage_Log_Table 获取最近一次使用记录的总时长
+    let totalSec = 0;
+    if (machData?.finished_at) {
+      const { data: usageLog } = await supabase
+        .from('Usage_Log_Table')
+        .select('mode_min')
+        .eq('machine_id', mid)
+        .order('used_at', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (usageLog?.mode_min) {
+        totalSec = usageLog.mode_min * 60;
+      }
+    }
+
     let remainSec = 0;
     let reservedRemainSec = 0;
+    const reservedTotalSec = 900; // 预约15分钟固定
     let pickupRemainSec = 0;
+    const pickupTotalSec = 900;   // 取件15分钟固定
     const nowMs = Date.now();
 
     if (machData?.finished_at) {
@@ -734,15 +752,24 @@ app.get('/getMachineInfo', async (req, res) => {
 
     res.json({
       remain_seconds: remainSec,
+      total_seconds: totalSec,
       reserved_remain_seconds: reservedRemainSec,
+      reserved_total_seconds: reservedTotalSec,
       pickup_remain_seconds: pickupRemainSec,
+      pickup_total_seconds: pickupTotalSec,
       ahead_count: waitCnt ?? 0,
       machine_status: machData?.machine_status ?? 'occupied',
       current_user_id: machData?.current_user_id ?? ''
     });
 
   } catch (err) {
-    res.json({ remain_seconds: 0, reserved_remain_seconds: 0, pickup_remain_seconds: 0, ahead_count: 0, machine_status: 'occupied', current_user_id: '' });
+    console.error("getMachineInfo error:", err);
+    res.json({ 
+      remain_seconds: 0, total_seconds: 0, 
+      reserved_remain_seconds: 0, reserved_total_seconds: 900, 
+      pickup_remain_seconds: 0, pickup_total_seconds: 900, 
+      ahead_count: 0, machine_status: 'occupied', current_user_id: '' 
+    });
   }
 });
 
@@ -947,6 +974,45 @@ setInterval(async () => {
     console.log(`Machine ${machine.machine_id} reservation expired → available`);
 
     if (targetUserId) {
+  await supabase.from('User_Violation_Record').insert([{
+    user_id: targetUserId,
+    violation_type: 'no_show',
+    status: 'active'
+  }]);
+
+  const { count } = await supabase
+    .from('User_Violation_Record')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', targetUserId)
+    .eq('violation_type', 'no_show')
+    .eq('status', 'active');
+
+  if (count >= 3) {
+    const { data: userData } = await supabase
+      .from('User_Table')
+      .select('credit_score')
+      .eq('user_id', targetUserId)
+      .single();
+
+    const newScore = Math.max(0, userData.credit_score - 5);
+
+    await supabase
+      .from('User_Table')
+      .update({ credit_score: newScore })
+      .eq('user_id', targetUserId);
+
+    await supabase
+      .from('User_Violation_Record')
+      .update({ status: 'processed' })
+      .eq('user_id', targetUserId)
+      .eq('violation_type', 'no_show')
+      .eq('status', 'active');
+
+    console.log(`User ${targetUserId} credit deducted: ${userData.credit_score} -> ${newScore}`);
+  }
+}
+
+    if (targetUserId) {
       const notifyTitle = 'Reservation Expired ⏰';
       const notifyBody = `Your reservation for Machine ${machine.machine_id} has expired. Please join the queue again if you want to use it.`;
       await sendNotification(targetUserId, notifyTitle, notifyBody);
@@ -986,6 +1052,43 @@ setInterval(async () => {
         pickup_end_at: null
       })
       .eq("machine_id", m.machine_id);
+
+await supabase.from('User_Violation_Record').insert([{
+  user_id: m.current_user_id,
+  violation_type: 'overdue_pickup',
+  status: 'active'
+}]);
+
+const { count } = await supabase
+  .from('User_Violation_Record')
+  .select('*', { count: 'exact', head: true })
+  .eq('user_id', m.current_user_id)
+  .eq('violation_type', 'overdue_pickup')
+  .eq('status', 'active');
+
+if (count >= 3) {
+  const { data: userData } = await supabase
+    .from('User_Table')
+    .select('credit_score')
+    .eq('user_id', m.current_user_id)
+    .single();
+
+  const newScore = Math.max(0, userData.credit_score - 5);
+
+  await supabase
+    .from('User_Table')
+    .update({ credit_score: newScore })
+    .eq('user_id', m.current_user_id);
+
+  await supabase
+    .from('User_Violation_Record')
+    .update({ status: 'processed' })
+    .eq('user_id', m.current_user_id)
+    .eq('violation_type', 'overdue_pickup')
+    .eq('status', 'active');
+
+  console.log(`User ${m.current_user_id} credit deducted: ${userData.credit_score} -> ${newScore}`);
+}
 
     // 取件窗口超时，机器进入 overdue，提醒用户立即取件
     await sendNotification(
