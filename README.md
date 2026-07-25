@@ -2,30 +2,37 @@
 A mobile-based smart laundry management system
 
 ## Features
-- Live status dashboard
-- Smart push reminders
-- Online queue system
-- Optional auto dryer queue transfer
-- Usage analytics & heatmap
-- Crowdsourced fault reporter
-- Real-time wait time estimate
-- Admin maintenance dashboard
-- Auto post-wash idle handling
-- Usage-based off-peak recommendations
+
+Each feature is labelled by how it is driven:
+- ⚙️ **Automated** — runs on backend logic/timers with no user input
+- 🔌 **IoT-simulated** — a physical sensor would trigger this in a real deployment; here a manual in-app action stands in for the sensor
+- 👤 **User-driven** — requires user input, a decision, or feedback
+
+- Live status dashboard — ⚙️ Automated display (reflects IoT-simulated and backend states)
+- Smart push reminders — ⚙️ Automated (triggered by backend events)
+- Online queue system — 👤 User-driven (request / leave the queue) + ⚙️ Automated (FIFO allocation)
+- Optional auto dryer queue transfer — ⚙️ Automated (triggered when a wash finishes), with a one-time user opt-in
+- Usage analytics & heatmap — ⚙️ Automated (data aggregation)
+- Crowdsourced fault reporter — 👤 User-driven (users submit reports)
+- Real-time wait time estimate — ⚙️ Automated (backend-computed)
+- Admin maintenance dashboard — 👤 User-driven (admin actions) + ⚙️ Automated broadcasts
+- Auto post-wash idle handling — ⚙️ Automated (scheduled tasks) + 🔌 IoT-simulated laundry collection
+- Usage-based off-peak recommendations — ⚙️ Automated (computed from usage data)
 
 ## Technologies
-LaundryPulse is built on a modern full-stack web architecture designed for real-time performance and scalability.
+LaundryPulse is built on a modern full-stack architecture designed for real-time performance and scalability.
 - **Frontend**: Flutter (Dart)
-- **Backend**: Node.js
+- **Backend**: Node.js with Express (REST API)
 - **Database**: Supabase (PostgreSQL)
 - **Notifications**: Firebase Cloud Messaging (FCM)
+- **Backend hosting**: Render, kept continuously available by UptimeRobot uptime monitoring
 - **Version Control & Collaboration**: Git & GitHub
-- **Deployment**: Android APK & iOS IPA
+- **Client distribution**: Android APK & iOS IPA
 
 ## How It Works
 
 ### Machine Status Updates
-Machine statuses (available, occupied, grace-period, overdue) are updated through **user actions in the app**, not automated IoT signals. For example:
+Machine statuses (available, occupied, overdue, out-of-service) are updated through **user actions in the app** together with **backend timers**, not automated IoT signals. For example:
 - A user presses **"Start Washing"** in the app to mark a machine as in use and start the countdown timer.
 - When the timer ends, the user receives a prompt to collect their laundry.
 - If the user presses **"Collected"**, the machine is marked as available again.
@@ -47,6 +54,7 @@ When requesting to queue for a washer or dryer, the system first verifies your c
 If eligible to queue:
 - If idle machines of the selected type exist, the system assigns the machine with the smallest ID to you, along with **a 15-minute reservation window** to start your laundry session.
 - If no idle machines are available, you are added to a global waiting queue. **Separate independent queues are maintained for washers and dryers**. Whenever a machine of your queued type becomes free, it will be allocated to the first user in the matching queue **in FIFO order**. An FCM push notification will be sent once you are assigned a machine, and you will still receive a 15-minute reservation window after allocation.
+- You can **leave a queue at any time** while waiting. After a confirmation prompt, your place is released to the next person in line; if you rejoin later you start from the back of the queue.
 
 ### Auto post-wash idle handling
 If no one picks up laundry within 15 minutes after a wash or dry cycle finishes, the machine’s status changes to overdue and triggers our Auto post-Wash idle handling process.
@@ -62,7 +70,11 @@ If no one picks up laundry within 15 minutes after a wash or dry cycle finishes,
 
 ### Credit Score
 - Every new user starts with an initial credit score of **15**.
-- Users **gain 5 credit points** if their laundry retrieval assistance receives positive feedback (clothes placed correctly with no missing items). They **lose 5 points** if rated negatively for misplacing laundry or missing belongings. No credit adjustment occurs if the user declines to help.
+- **Assistance feedback (user-driven):** users **gain 5 credit points** if their laundry retrieval assistance receives positive feedback (clothes placed correctly with no missing items). They **lose 5 points** if rated negatively for misplacing laundry or missing belongings. No credit adjustment occurs if the user declines to help.
+- **No-show penalty (automated):** if a user reserves a machine but does not start it within the 15-minute reservation window, a `no_show` violation is recorded. After **3 active no-show violations**, the backend automatically deducts **5 points**.
+- **Overdue-pickup penalty (automated):** if a user fails to collect their laundry within the 15-minute pick-up window (the machine turns overdue), an `overdue_pickup` violation is recorded. After **3 active overdue-pickup violations**, the backend automatically deducts **5 points**.
+
+> Violations are tracked in the `User_Violation_Record` table; once a batch of three is processed, those records are marked as processed so they are not counted again.
 
 
 > Note: We set each new user’s starting credit score to 15, so everyone can use the online queue right away. Users cannot join the queue if their score falls below 15. We made this credit rule to **stop people from moving others’ laundry around randomly**. First, any overdue machine will be locked automatically. Second, if you choose to help take out laundry but put it in the wrong spot, you will lose 5 credit points. Both rules work together to prevent misplaced clothes.
