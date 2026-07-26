@@ -1714,8 +1714,9 @@ class _ProfilePageState extends State<ProfilePage> {
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Text(
-                        "💡 Help others by placing overdue clothes in lockers to earn +5 credits.\n"
-                        "⚠️ Declining to help deducts -5 credits.",
+                        "💡 Help others collect overdue laundry: you earn +5 credits if the owner confirms you placed laundry correctly in lockers with nothing missing, otherwise you will get -5 credits.\n"
+                        "⚠️ You lose 5 credits after accumulating 3 overdue laundry pick-ups.\n"
+                        "⚠️ You lose another 5 credits if you have 3 unused reservations.",
                         style: TextStyle(fontSize: 13, color: Colors.blueGrey),
                       ),
                     ),
