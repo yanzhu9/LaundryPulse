@@ -88,6 +88,11 @@ Option A - Android Emulator:
 Option B - Web browser (for quick preview):
 - Run: flutter run -d chrome
 
+> **Note for Web Preview**:
+> Due to incomplete secure‑context exemption implementation for `http://localhost` in Microsoft Edge, Firebase Cloud Messaging (FCM) notification permission requests may hang indefinitely on Edge during local web testing.
+> This issue only affects local `localhost` development on Edge. FCM functions correctly when the frontend is deployed to production HTTPS environment.
+> For complete feature testing including push notifications, please use **Google Chrome** for web preview.
+
 ### Run the Backend Locally
 ```bash
 cd LaundryPulse/backend
